@@ -1056,7 +1056,7 @@ st.sidebar.caption("⚠️ 본 도구는 참고용입니다. 모든 매매 결�
 
 # ===== 메인 화면 =====
 if mode == "🔍 단일 종목 분석":
-    st.title("종목 하나 자세히 분석하기")
+    st.title("🔍 단일 종목 분석")
 
     market_news = get_market_news(3)
     if market_news:
@@ -1111,7 +1111,7 @@ if mode == "🔍 단일 종목 분석":
             render_analysis_detail(df_ind, result, name, code, buy_price)
 
 elif mode == "📜 분석 기록":
-    st.title("최근 분석 기록")
+    st.title("📜 분석 기록")
     history = load_history()
     if not history:
         st.info("아직 분석 기록이 없습니다. 종목을 분석하면 자동으로 저장됩니다.")
@@ -1148,7 +1148,7 @@ elif mode == "📜 분석 기록":
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 elif mode == "🧪 백테스트":
-    st.title("점수 시스템 백테스트")
+    st.title("🧪 백테스트")
     st.caption("매수/매도 임계점 30여 개 조합을 모두 시뮬해 가장 좋은 조합을 자동으로 찾아줍니다.")
 
     c1, c2 = st.columns([3, 1])
@@ -1254,7 +1254,7 @@ elif mode == "🔭 종목 발굴":
     )
 
 else:  # 포트폴리오 관리
-    st.title("보유 종목 추가/삭제")
+    st.title("📋 포트폴리오 관리")
     portfolio = load_portfolio()
 
     with st.form("add_form", clear_on_submit=True):

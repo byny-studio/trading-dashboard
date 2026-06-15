@@ -57,6 +57,15 @@ _CSS = """
 /* 입력칸 포커스 시 뜨는 'Press Enter to submit form' 안내문 숨김 */
 [data-testid="InputInstructions"] { display: none !important; }
 
+/* 본문 상단 여백 정리 — 제목 시작선을 사이드바 메뉴와 같은 높이로 */
+.block-container,
+[data-testid="stMainBlockContainer"] {
+    padding-top: 3rem !important;
+}
+[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+    padding-top: 1.5rem !important;
+}
+
 /* ========== Pretendard 폰트 ========== */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
 

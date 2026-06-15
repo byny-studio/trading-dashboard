@@ -81,7 +81,7 @@ def render_screener(
     make_chart=None,
 ):
     """종목 발굴 화면."""
-    st.subheader("종목 발굴")
+    st.title("🔭 종목 발굴")
     st.caption(
         "KOSPI 200 + KOSDAQ 150 약 350개 종목 중 매수 신호가 강한 종목을 찾습니다. "
         "첫 스캔은 2-4분 정도 걸려요."
