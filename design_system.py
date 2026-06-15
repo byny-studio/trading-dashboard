@@ -42,6 +42,12 @@ COLORS_DARK = {
 
 _CSS = """
 <style>
+/* ========== Streamlit 기본 상단 UI 정리 ========== */
+/* 상단 툴바(Deploy·GitHub·⋮ 메뉴)와 색상 띠 숨김 */
+[data-testid="stToolbar"] { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
+#MainMenu { visibility: hidden !important; }
+
 /* ========== Pretendard 폰트 ========== */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
 

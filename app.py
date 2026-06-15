@@ -52,10 +52,14 @@ def check_password() -> bool:
         return True
 
     st.title("🔒 로그인")
-    st.caption("이 앱은 비밀번호로 보호되어 있습니다.")
     with st.form("login_form"):
-        pw = st.text_input("비밀번호", type="password")
-        submitted = st.form_submit_button("입력", type="primary")
+        pw = st.text_input(
+            "비밀번호",
+            type="password",
+            placeholder="비밀번호를 입력하세요",
+            label_visibility="collapsed",
+        )
+        submitted = st.form_submit_button("입력", type="primary", use_container_width=True)
         if submitted:
             if pw == correct:
                 st.session_state["auth_ok"] = True
