@@ -27,6 +27,7 @@ st.set_page_config(
     page_title="적게 일하고 많이 벌기 💵",
     page_icon="📈",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 from design_system import inject_css
 inject_css()

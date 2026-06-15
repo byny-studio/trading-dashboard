@@ -44,9 +44,16 @@ _CSS = """
 <style>
 /* ========== Streamlit 기본 상단 UI 정리 ========== */
 /* 상단 툴바(Deploy·GitHub·⋮ 메뉴)와 색상 띠 숨김 */
-[data-testid="stToolbar"] { display: none !important; }
-[data-testid="stDecoration"] { display: none !important; }
+/* Deploy 버튼·설정 메뉴·색상 띠만 숨김 (헤더 자체는 유지) */
+[data-testid="stAppDeployButton"] { display: none !important; }
 #MainMenu { visibility: hidden !important; }
+[data-testid="stDecoration"] { display: none !important; }
+/* ⚠️ 사이드바(메뉴) 열기 버튼은 항상 보이게 — 모바일에서 메뉴 접근 */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
+    display: flex !important;
+    visibility: visible !important;
+}
 /* 입력칸 포커스 시 뜨는 'Press Enter to submit form' 안내문 숨김 */
 [data-testid="InputInstructions"] { display: none !important; }
 
