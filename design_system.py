@@ -64,10 +64,10 @@ _CSS = """
     min-height: 0 !important;
     background: transparent !important;
 }
-/* 본문 시작점 (3rem 기준 +15px 아래로) */
+/* 본문 시작점 (3rem 기준 +13px 아래로) */
 .block-container,
 [data-testid="stMainBlockContainer"] {
-    padding-top: calc(3rem + 15px) !important;
+    padding-top: calc(3rem + 13px) !important;
 }
 /* 메뉴(사이드바)만 ~50px 위로 */
 [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
