@@ -64,13 +64,13 @@ _CSS = """
     min-height: 0 !important;
     background: transparent !important;
 }
-/* 사이드바·본문 모두 같은 상단 여백 → 첫 제목 시작선 일치 */
+/* 사이드바·본문 모두 같은 상단 여백 → 첫 제목 시작선 일치 (데스크톱 기준 ~50px 위로) */
 .block-container,
 [data-testid="stMainBlockContainer"] {
-    padding-top: 3rem !important;
+    padding-top: 0.3rem !important;
 }
 [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
-    padding-top: 3rem !important;
+    padding-top: 0.3rem !important;
 }
 
 /* ========== Pretendard 폰트 ========== */
