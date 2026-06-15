@@ -1,0 +1,15 @@
+# Streamlit 테마 설정 (다크 모드 통일)
+
+[theme]
+base = "dark"
+primaryColor = "#818CF8"
+backgroundColor = "#0F0F11"
+secondaryBackgroundColor = "#1F1F23"
+textColor = "#FAFAFA"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

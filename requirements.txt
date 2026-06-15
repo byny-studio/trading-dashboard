@@ -1,0 +1,8 @@
+streamlit>=1.30.0
+pandas>=2.0.0
+numpy>=1.24.0
+plotly>=5.17.0
+finance-datareader>=0.9.202
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+trafilatura>=1.6.0

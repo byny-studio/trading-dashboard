@@ -1,0 +1,8 @@
+# 비밀번호 등 비공개 설정 — 절대 업로드 금지
+.streamlit/secrets.toml
+
+# 백업/캐시/시스템 파일
+_archive/
+__pycache__/
+*.pyc
+.DS_Store

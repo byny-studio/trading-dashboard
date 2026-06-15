@@ -1,0 +1,222 @@
+[
+  {
+    "timestamp": "2026-06-15 11:04",
+    "code": "176750",
+    "name": "듀켐바이오",
+    "price": 6470,
+    "change_pct": 4.35,
+    "score": 32,
+    "verdict": "⚠️ 매도 검토",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-06-15 10:55",
+    "code": "003490",
+    "name": "대한항공",
+    "price": 30100,
+    "change_pct": 13.16,
+    "score": 80,
+    "verdict": "🚀 강력 매수",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-06-15 10:55",
+    "code": "003490",
+    "name": "대한항공",
+    "price": 30100,
+    "change_pct": 13.16,
+    "score": 80,
+    "verdict": "🚀 강력 매수",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-06-09 14:24",
+    "code": "005930",
+    "name": "삼성전자",
+    "price": 318000,
+    "change_pct": 7.61,
+    "score": 72,
+    "verdict": "✅ 매수 관심",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-06-09 13:22",
+    "code": "005930",
+    "name": "005930",
+    "price": 316500,
+    "change_pct": 7.11,
+    "score": 72,
+    "verdict": "✅ 매수 관심",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-11 15:59",
+    "code": "010140",
+    "name": "삼성중공업",
+    "price": 33950,
+    "change_pct": 6.26,
+    "score": 88,
+    "verdict": "🚀 강력 매수",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-11 10:52",
+    "code": "120110",
+    "name": "코오롱인더",
+    "price": 85600,
+    "change_pct": -6.86,
+    "score": 72,
+    "verdict": "✅ 매수 관심",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-11 10:10",
+    "code": "000660",
+    "name": "SK하이닉스",
+    "price": 1856500,
+    "change_pct": 10.11,
+    "score": 48,
+    "verdict": "🟡 관망",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-11 10:10",
+    "code": "005930",
+    "name": "삼성전자",
+    "price": 283000,
+    "change_pct": 5.4,
+    "score": 48,
+    "verdict": "🟡 관망",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-07 14:38",
+    "code": "000660",
+    "name": "SK하이닉스",
+    "price": 1653000,
+    "change_pct": 3.25,
+    "score": 56,
+    "verdict": "🟡 관망",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-07 10:23",
+    "code": "000660",
+    "name": "SK하이닉스",
+    "price": 1575000,
+    "change_pct": -1.62,
+    "score": 48,
+    "verdict": "🟡 관망",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-06 13:00",
+    "code": "203650",
+    "name": "드림시큐리티",
+    "price": 3635,
+    "change_pct": 25.78,
+    "score": 88,
+    "verdict": "🚀 강력 매수",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-06 12:59",
+    "code": "001510",
+    "name": "SK증권",
+    "price": 5600,
+    "change_pct": 7.9,
+    "score": 64,
+    "verdict": "✅ 매수 관심",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-06 12:59",
+    "code": "018880",
+    "name": "한온시스템",
+    "price": 5330,
+    "change_pct": 9.9,
+    "score": 64,
+    "verdict": "✅ 매수 관심",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-06 12:59",
+    "code": "006260",
+    "name": "LS",
+    "price": 531000,
+    "change_pct": 4.32,
+    "score": 56,
+    "verdict": "🟡 관망",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-06 12:58",
+    "code": "024840",
+    "name": "KBI메탈",
+    "price": 8610,
+    "change_pct": 29.86,
+    "score": 60,
+    "verdict": "✅ 매수 관심",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-06 12:58",
+    "code": "129920",
+    "name": "대성하이텍",
+    "price": 8820,
+    "change_pct": -16.79,
+    "score": 64,
+    "verdict": "✅ 매수 관심",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-06 12:58",
+    "code": "480370",
+    "name": "씨케이솔루션",
+    "price": 2735,
+    "change_pct": 6.42,
+    "score": 56,
+    "verdict": "🟡 관망",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-06 10:05",
+    "code": "086520",
+    "name": "에코프로",
+    "price": 158200,
+    "change_pct": 1.54,
+    "score": 64,
+    "verdict": "✅ 매수 관심",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-06 10:05",
+    "code": "365340",
+    "name": "성일하이텍",
+    "price": 78800,
+    "change_pct": -1.25,
+    "score": 60,
+    "verdict": "✅ 매수 관심",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-06 10:05",
+    "code": "336260",
+    "name": "두산퓨얼셀",
+    "price": 63900,
+    "change_pct": 5.45,
+    "score": 48,
+    "verdict": "🟡 관망",
+    "mode": "단일"
+  },
+  {
+    "timestamp": "2026-05-06 10:04",
+    "code": "014680",
+    "name": "한솔케미칼",
+    "price": 297500,
+    "change_pct": 3.84,
+    "score": 52,
+    "verdict": "🟡 관망",
+    "mode": "단일"
+  }
+]
