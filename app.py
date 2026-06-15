@@ -188,6 +188,15 @@ def get_market_news(n: int = 3) -> list:
     return news
 
 
+def is_mobile() -> bool:
+    """접속 기기가 모바일인지 User-Agent로 판별 (판별 불가 시 False)."""
+    try:
+        ua = (st.context.headers.get("User-Agent", "") or "").lower()
+    except Exception:
+        return False
+    return any(k in ua for k in ("iphone", "android", "ipad", "ipod", "mobile"))
+
+
 # ===== 펀더멘털 (PER/PBR/배당률) =====
 def _to_num(text):
     if text is None:
@@ -1269,24 +1278,25 @@ else:  # 포트폴리오 관리
                     st.rerun()
 
     if portfolio:
+        mobile = is_mobile()
         st.markdown("### 현재 보유 종목")
         st.caption("👇 종목 이름을 누르면 그 자리 바로 아래에 상세 분석이 펼쳐집니다.")
         with st.expander("📖 매매 신호 기준 보기"):
             st.markdown(VERDICT_TABLE)
 
-        # 컬럼 헤더 (종목과 매매신호 사이에 spacer 컬럼)
+        # 데스크톱: 표 헤더 (모바일은 카드형이라 헤더 생략)
         col_widths = [2.4, 0.5, 3, 2, 1, 2, 0.6, 0.6]
-        h = st.columns(col_widths, vertical_alignment="center")
-        h[0].caption("종목")
-        h[2].caption("매매 신호")
-        h[3].caption("매수가")
-        h[4].caption("수량")
-        h[5].caption("평가금액")
+        if not mobile:
+            h = st.columns(col_widths, vertical_alignment="center")
+            h[0].caption("종목")
+            h[2].caption("매매 신호")
+            h[3].caption("매수가")
+            h[4].caption("수량")
+            h[5].caption("평가금액")
 
         detail_idx = st.session_state.get("portfolio_detail")
         edit_idx = st.session_state.get("portfolio_edit")
         for i, item in enumerate(portfolio):
-            cols = st.columns(col_widths, vertical_alignment="center")
             label = format_stock(item.get("name", ""), item.get("code", ""))
 
             # 종목별 분석 (캐시되어 있으니 재호출은 빠름)
@@ -1303,31 +1313,71 @@ else:  # 포트폴리오 관리
                 signal_text = "⚠️ 데이터 없음"
                 cur_price = 0
 
-            if cols[0].button(label, key=f"row_{i}", use_container_width=True):
-                if detail_idx == i:
+            buy = item.get("buy_price", 0) or 0
+            qty = item.get("quantity", 0) or 0
+            eval_text = f"{cur_price * qty:,}" if cur_price else "-"
+
+            if mobile:
+                # ----- 모바일: 종목별 카드 -----
+                with st.container(border=True):
+                    if st.button(label, key=f"row_{i}", use_container_width=True):
+                        if detail_idx == i:
+                            st.session_state.pop("portfolio_detail", None)
+                        else:
+                            st.session_state["portfolio_detail"] = i
+                            st.session_state.pop("portfolio_edit", None)
+                        st.rerun()
+                    st.markdown(
+                        "<div style='font-size:13px;line-height:1.9;color:var(--ds-text-muted)'>"
+                        f"🔔 {signal_text}<br>"
+                        f"매수가 <b style='color:var(--ds-text)'>{buy:,}</b> · "
+                        f"수량 <b style='color:var(--ds-text)'>{qty}</b> · "
+                        f"평가 <b style='color:var(--ds-text)'>{eval_text}</b>"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                    bc = st.columns(2)
+                    if bc[0].button("✏️ 수정", key=f"edit_{i}", use_container_width=True):
+                        if edit_idx == i:
+                            st.session_state.pop("portfolio_edit", None)
+                        else:
+                            st.session_state["portfolio_edit"] = i
+                            st.session_state.pop("portfolio_detail", None)
+                        st.rerun()
+                    if bc[1].button("🗑️ 삭제", key=f"del_{i}", use_container_width=True):
+                        portfolio.pop(i)
+                        save_portfolio(portfolio)
+                        st.session_state.pop("portfolio_detail", None)
+                        st.session_state.pop("portfolio_edit", None)
+                        st.rerun()
+            else:
+                # ----- 데스크톱: 표 한 줄 -----
+                cols = st.columns(col_widths, vertical_alignment="center")
+                if cols[0].button(label, key=f"row_{i}", use_container_width=True):
+                    if detail_idx == i:
+                        st.session_state.pop("portfolio_detail", None)
+                    else:
+                        st.session_state["portfolio_detail"] = i
+                        st.session_state.pop("portfolio_edit", None)
+                    st.rerun()
+                # cols[1]은 종목 ↔ 매매신호 사이 여백 (spacer)
+                cols[2].write(signal_text)
+                cols[3].write(f"{buy:,}")
+                cols[4].write(f"{qty}")
+                cols[5].write(eval_text)
+                if cols[6].button("✏️", key=f"edit_{i}", help="매수가·수량 수정"):
+                    if edit_idx == i:
+                        st.session_state.pop("portfolio_edit", None)
+                    else:
+                        st.session_state["portfolio_edit"] = i
+                        st.session_state.pop("portfolio_detail", None)
+                    st.rerun()
+                if cols[7].button("🗑️", key=f"del_{i}", help="삭제"):
+                    portfolio.pop(i)
+                    save_portfolio(portfolio)
                     st.session_state.pop("portfolio_detail", None)
-                else:
-                    st.session_state["portfolio_detail"] = i
                     st.session_state.pop("portfolio_edit", None)
-                st.rerun()
-            # cols[1]은 종목 ↔ 매매신호 사이 여백 (spacer)
-            cols[2].write(signal_text)
-            cols[3].write(f"{item.get('buy_price', 0):,}")
-            cols[4].write(f"{item.get('quantity', 0)}")
-            cols[5].write(f"{cur_price * (item.get('quantity', 0) or 0):,}" if cur_price else "-")
-            if cols[6].button("✏️", key=f"edit_{i}", help="매수가·수량 수정"):
-                if edit_idx == i:
-                    st.session_state.pop("portfolio_edit", None)
-                else:
-                    st.session_state["portfolio_edit"] = i
-                    st.session_state.pop("portfolio_detail", None)
-                st.rerun()
-            if cols[7].button("🗑️", key=f"del_{i}", help="삭제"):
-                portfolio.pop(i)
-                save_portfolio(portfolio)
-                st.session_state.pop("portfolio_detail", None)
-                st.session_state.pop("portfolio_edit", None)
-                st.rerun()
+                    st.rerun()
 
             # 수정 폼 (편집 모드일 때 행 바로 아래)
             if edit_idx == i:

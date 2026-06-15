@@ -412,6 +412,53 @@ h3 { font-size: 16px !important; }
         border-color: var(--ds-border) !important;
     }
 }
+
+/* ========================================== */
+/* ========== 모바일 반응형 (≤640px) ========== */
+/* ========================================== */
+@media (max-width: 640px) {
+    /* 본문 좌우 여백 최소화 → 좁은 화면 폭 최대 활용 */
+    .block-container,
+    [data-testid="stMainBlockContainer"],
+    [data-testid="block-container"] {
+        padding-left: 0.7rem !important;
+        padding-right: 0.7rem !important;
+        padding-top: 3rem !important;
+        padding-bottom: 2rem !important;
+    }
+
+    /* 제목 약간 축소 */
+    h1 { font-size: 18px !important; }
+    h2 { font-size: 16px !important; }
+    h3 { font-size: 15px !important; }
+
+    /* 가로 컬럼이 좁으면 다음 줄로 흐르게 (내용 잘림 방지) */
+    [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+        align-items: stretch !important;
+    }
+    /* 각 컬럼 최소 너비 → 한 줄에 2개씩 유연하게 배치 (폼·메트릭) */
+    [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        min-width: 140px !important;
+        flex: 1 1 140px !important;
+        justify-content: flex-start !important;
+    }
+
+    /* 메트릭 카드 컴팩트 */
+    [data-testid="stMetric"] {
+        padding: 10px 12px !important;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 18px !important;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 12px !important;
+    }
+
+    /* 버튼 글자 약간 축소 */
+    .stButton > button { font-size: 13px !important; }
+}
 </style>
 """
 
