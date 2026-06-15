@@ -1,6 +1,11 @@
 # 비밀번호 등 비공개 설정 — 절대 업로드 금지
 .streamlit/secrets.toml
 
+# 개인 데이터(보유종목/기록/관심종목) — 공개 저장소에 노출 금지
+portfolio.json
+history.json
+watchlist.json
+
 # 백업/캐시/시스템 파일
 _archive/
 __pycache__/

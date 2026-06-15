@@ -954,13 +954,28 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
 
 # ===== 포트폴리오 저장/로드 =====
 def load_portfolio() -> list:
-    if not os.path.exists(PORTFOLIO_FILE):
-        return []
+    # 클라우드 배포 시: 보유종목을 비공개 Secrets에 보관 (공개 저장소에 노출 안 함)
+    from_secrets = False
+    items = None
     try:
-        with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
-            items = json.load(f)
+        raw = st.secrets["portfolio_json"]
     except Exception:
-        return []
+        raw = None
+    if raw:
+        try:
+            items = json.loads(raw)
+            from_secrets = True
+        except Exception:
+            items = None
+
+    if items is None:
+        if not os.path.exists(PORTFOLIO_FILE):
+            return []
+        try:
+            with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
+                items = json.load(f)
+        except Exception:
+            return []
     # 이름이 비어있거나 코드와 같은 항목을 KRX 리스트에서 보강
     changed = False
     for item in items:
@@ -971,7 +986,7 @@ def load_portfolio() -> list:
             if found and found_name and found_name != code:
                 item["name"] = found_name
                 changed = True
-    if changed:
+    if changed and not from_secrets:
         save_portfolio(items)
     return items
 
