@@ -57,13 +57,20 @@ _CSS = """
 /* 입력칸 포커스 시 뜨는 'Press Enter to submit form' 안내문 숨김 */
 [data-testid="InputInstructions"] { display: none !important; }
 
-/* 본문 상단 여백 정리 — 제목 시작선을 사이드바 메뉴와 같은 높이로 */
+/* 상단 시작점 정렬 — 사이드바 제목과 본문 제목의 윗줄을 같은 높이로 */
+/* 헤더가 본문만 아래로 밀어 어긋나므로 헤더 높이를 없앰 */
+[data-testid="stHeader"] {
+    height: 0 !important;
+    min-height: 0 !important;
+    background: transparent !important;
+}
+/* 사이드바·본문 모두 같은 상단 여백 → 첫 제목 시작선 일치 */
 .block-container,
 [data-testid="stMainBlockContainer"] {
     padding-top: 3rem !important;
 }
 [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
-    padding-top: 1.5rem !important;
+    padding-top: 3rem !important;
 }
 
 /* ========== Pretendard 폰트 ========== */
