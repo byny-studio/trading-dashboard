@@ -56,7 +56,6 @@ def check_password() -> bool:
         pw = st.text_input(
             "비밀번호",
             type="password",
-            placeholder="비밀번호를 입력하세요",
             label_visibility="collapsed",
         )
         submitted = st.form_submit_button("입력", type="primary", use_container_width=True)

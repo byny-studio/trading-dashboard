@@ -47,6 +47,8 @@ _CSS = """
 [data-testid="stToolbar"] { display: none !important; }
 [data-testid="stDecoration"] { display: none !important; }
 #MainMenu { visibility: hidden !important; }
+/* 입력칸 포커스 시 뜨는 'Press Enter to submit form' 안내문 숨김 */
+[data-testid="InputInstructions"] { display: none !important; }
 
 /* ========== Pretendard 폰트 ========== */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
