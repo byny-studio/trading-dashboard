@@ -572,6 +572,72 @@ def sweep_thresholds(
     return results
 
 
+def render_portfolio_backtest(code: str, name: str, period_days: int = 1120) -> None:
+    """포트폴리오 행에서 펼치는 간단 백테스트 요약 (최근 3년)."""
+    if not code:
+        st.warning("종목 코드가 없어 백테스트할 수 없습니다.")
+        return
+    with st.spinner(f"{format_stock(name, code)} 백테스트 중..."):
+        df_bt = load_stock_data(code, days=period_days)
+        if df_bt.empty or len(df_bt) < 80:
+            st.warning("백테스트에 충분한 데이터가 없습니다 (최소 80일 필요).")
+            return
+        scores = compute_daily_scores(df_bt)
+        results = sweep_thresholds(scores) if scores else []
+    if not results:
+        st.warning("유효한 백테스트 결과를 만들지 못했습니다.")
+        return
+
+    results.sort(key=lambda x: (-x["system_return"], x["trades"]))
+    best = results[0]
+
+    st.markdown(f"**🧪 {format_stock(name, code)} 백테스트 (최근 3년)**")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("최적 시스템", f"{best['system_return']:+.1f}%")
+    c2.metric("그냥 보유(B&H)", f"{best['bh_return']:+.1f}%")
+    c3.metric("초과 수익", f"{best['excess']:+.1f}%p")
+    st.caption(
+        f"최적 조합 매수≥{best['buy']} · 매도≤{best['sell']} · "
+        f"거래 {best['trades']}회 · 승률 {best['win_rate']:.0f}% · MDD {best['mdd']:.1f}%"
+    )
+
+    # 자동 해석 — 거래가 충분한(10회+) 조합 기준으로 신뢰도 판단
+    active = [r for r in results if r["trades"] >= 10]
+    active_win = [r for r in active if r["excess"] > 0]
+    if not active:
+        st.info("📌 거래가 거의 일어나지 않는 종목이라 신호 매매 검증이 어렵습니다 → **보유형**에 가깝습니다.")
+    else:
+        ratio = len(active_win) / len(active)
+        best_active_excess = max(r["excess"] for r in active)
+        if ratio >= 0.5 and best_active_excess > 10:
+            st.success(
+                f"📌 거래 충분한 {len(active)}개 조합 중 {len(active_win)}개가 보유를 초과 → "
+                "**신호 매매가 통하는 편**입니다."
+            )
+        elif ratio >= 0.3:
+            st.warning(
+                f"📌 거래 충분한 {len(active)}개 조합 중 {len(active_win)}개만 보유 초과 → "
+                "**애매함**. 신중히 보세요."
+            )
+        else:
+            st.error(
+                f"📌 거래 충분한 {len(active)}개 조합 중 {len(active_win)}개만 보유 초과 → "
+                "**자주 매매하면 보유보다 불리**할 가능성이 큽니다(보유형)."
+            )
+
+    with st.expander("📊 전체 조합 결과 (수익률 순)"):
+        st.dataframe(
+            pd.DataFrame([{
+                "매수≥": r["buy"], "매도≤": r["sell"],
+                "수익률": f"{r['system_return']:+.1f}%",
+                "B&H 대비": f"{r['excess']:+.1f}%p",
+                "거래": r["trades"], "승률": f"{r['win_rate']:.0f}%",
+                "MDD": f"{r['mdd']:.1f}%",
+            } for r in results]),
+            use_container_width=True, hide_index=True,
+        )
+
+
 # ===== 손절/익절 계산 =====
 def calc_stop_levels(buy_price: float, current_price: float) -> dict:
     """손절가는 매수가 기준(원금 보호). 익절가는 매수가/현재가 중 높은 쪽 기준
@@ -1289,7 +1355,7 @@ else:  # 포트폴리오 관리
             st.markdown(VERDICT_TABLE)
 
         # 데스크톱: 표 헤더 (모바일은 카드형이라 헤더 생략)
-        col_widths = [2.4, 0.5, 3, 2, 1, 2, 0.6, 0.6]
+        col_widths = [2.4, 0.5, 3, 2, 1, 2, 0.6, 0.6, 0.6]
         if not mobile:
             h = st.columns(col_widths, vertical_alignment="center")
             h[0].caption("종목")
@@ -1300,6 +1366,7 @@ else:  # 포트폴리오 관리
 
         detail_idx = st.session_state.get("portfolio_detail")
         edit_idx = st.session_state.get("portfolio_edit")
+        bt_idx = st.session_state.get("portfolio_backtest")
         for i, item in enumerate(portfolio):
             label = format_stock(item.get("name", ""), item.get("code", ""))
 
@@ -1330,6 +1397,7 @@ else:  # 포트폴리오 관리
                         else:
                             st.session_state["portfolio_detail"] = i
                             st.session_state.pop("portfolio_edit", None)
+                            st.session_state.pop("portfolio_backtest", None)
                         st.rerun()
                     st.markdown(
                         "<div style='font-size:13px;line-height:1.9;color:var(--ds-text-muted)'>"
@@ -1340,19 +1408,29 @@ else:  # 포트폴리오 관리
                         "</div>",
                         unsafe_allow_html=True,
                     )
-                    bc = st.columns(2)
-                    if bc[0].button("✏️ 수정", key=f"edit_{i}", use_container_width=True):
+                    bc = st.columns(3)
+                    if bc[0].button("🧪 백테스트", key=f"bt_{i}", use_container_width=True):
+                        if bt_idx == i:
+                            st.session_state.pop("portfolio_backtest", None)
+                        else:
+                            st.session_state["portfolio_backtest"] = i
+                            st.session_state.pop("portfolio_detail", None)
+                            st.session_state.pop("portfolio_edit", None)
+                        st.rerun()
+                    if bc[1].button("✏️ 수정", key=f"edit_{i}", use_container_width=True):
                         if edit_idx == i:
                             st.session_state.pop("portfolio_edit", None)
                         else:
                             st.session_state["portfolio_edit"] = i
                             st.session_state.pop("portfolio_detail", None)
+                            st.session_state.pop("portfolio_backtest", None)
                         st.rerun()
-                    if bc[1].button("🗑️ 삭제", key=f"del_{i}", use_container_width=True):
+                    if bc[2].button("🗑️ 삭제", key=f"del_{i}", use_container_width=True):
                         portfolio.pop(i)
                         save_portfolio(portfolio)
                         st.session_state.pop("portfolio_detail", None)
                         st.session_state.pop("portfolio_edit", None)
+                        st.session_state.pop("portfolio_backtest", None)
                         st.rerun()
             else:
                 # ----- 데스크톱: 표 한 줄 -----
@@ -1363,24 +1441,35 @@ else:  # 포트폴리오 관리
                     else:
                         st.session_state["portfolio_detail"] = i
                         st.session_state.pop("portfolio_edit", None)
+                        st.session_state.pop("portfolio_backtest", None)
                     st.rerun()
                 # cols[1]은 종목 ↔ 매매신호 사이 여백 (spacer)
                 cols[2].write(signal_text)
                 cols[3].write(f"{buy:,}")
                 cols[4].write(f"{qty}")
                 cols[5].write(eval_text)
-                if cols[6].button("✏️", key=f"edit_{i}", help="매수가·수량 수정"):
+                if cols[6].button("🧪", key=f"bt_{i}", help="백테스트"):
+                    if bt_idx == i:
+                        st.session_state.pop("portfolio_backtest", None)
+                    else:
+                        st.session_state["portfolio_backtest"] = i
+                        st.session_state.pop("portfolio_detail", None)
+                        st.session_state.pop("portfolio_edit", None)
+                    st.rerun()
+                if cols[7].button("✏️", key=f"edit_{i}", help="매수가·수량 수정"):
                     if edit_idx == i:
                         st.session_state.pop("portfolio_edit", None)
                     else:
                         st.session_state["portfolio_edit"] = i
                         st.session_state.pop("portfolio_detail", None)
+                        st.session_state.pop("portfolio_backtest", None)
                     st.rerun()
-                if cols[7].button("🗑️", key=f"del_{i}", help="삭제"):
+                if cols[8].button("🗑️", key=f"del_{i}", help="삭제"):
                     portfolio.pop(i)
                     save_portfolio(portfolio)
                     st.session_state.pop("portfolio_detail", None)
                     st.session_state.pop("portfolio_edit", None)
+                    st.session_state.pop("portfolio_backtest", None)
                     st.rerun()
 
             # 수정 폼 (편집 모드일 때 행 바로 아래)
@@ -1425,5 +1514,10 @@ else:  # 포트폴리오 관리
                             item.get("name", ""), item.get("code", ""),
                             item.get("buy_price", 0),
                         )
+
+            # 백테스트 버튼 클릭 시 행 바로 아래에 요약 펼치기
+            if bt_idx == i:
+                with st.container(border=True):
+                    render_portfolio_backtest(item.get("code", ""), item.get("name", ""))
     else:
         st.info("아직 등록된 종목이 없습니다.")
