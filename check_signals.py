@@ -108,6 +108,26 @@ def overheat(df):
     return (2 if strong else 1 if (c_band or c_s1 or met >= 2) else 0), tags
 
 
+def position_action(buy_price, cur_price, trend, rev, oh_level, mb=True):
+    if not buy_price or buy_price <= 0 or not cur_price:
+        return ""
+    pl = (cur_price - buy_price) / buy_price * 100
+    p = f"{pl:+.1f}%"
+    if oh_level >= 2 and pl > 0:
+        return f"🔥 익절 고려 · 손익 {p} (과열)"
+    if pl >= 20 and not (mb and trend >= 55):
+        return f"💰 익절 고려 · 손익 {p} (추세 둔화)"
+    if pl <= -8 and trend <= 40 and rev < 70:
+        return f"✂️ 손절 검토 · 손익 {p} (추세 약세)"
+    if pl < 0 and rev >= 70:
+        return f"🔄 추매(물타기) 고려 · 손익 {p} (반등 신호)"
+    if pl >= 0 and mb and trend >= 70:
+        return f"📈 보유·추가매수 여지 · 손익 {p} (추세 강함)"
+    if pl >= 0 and mb and trend >= 55:
+        return f"✅ 보유 지속 · 손익 {p}"
+    return f"⏸️ 관망 · 손익 {p}"
+
+
 def market_bullish():
     try:
         df = fdr.DataReader("KS11", datetime.now() - timedelta(days=450), datetime.now())
@@ -132,12 +152,13 @@ def main():
     bull = market_bullish()
     end = datetime.now()
     start = end - timedelta(days=320)
-    buy_trend, buy_rev, take_profit = [], [], []
+    take_profit, cut_loss, add_more = [], [], []
     ref_date = ""
 
     for it in portfolio:
         code = str(it.get("code", "")).zfill(6)
         name = it.get("name", code)
+        buy = it.get("buy_price", 0) or 0
         try:
             df = add_indicators(fdr.DataReader(code, start, end))
         except Exception:
@@ -149,27 +170,32 @@ def main():
             ref_date = last_date
         price = int(df.iloc[-1]["Close"])
         t, r = trend_score(df), reversion_score(df)
-        lvl, tags = overheat(df)
-        if lvl == 2:
-            take_profit.append(f"• **{name}** {price:,}원 — {' · '.join(tags)}")
-        if bull and t >= 70:
-            buy_trend.append(f"• **{name}** {price:,}원 (추세 {t})")
-        if r >= 70:
-            buy_rev.append(f"• **{name}** {price:,}원 (반등 {r})")
+        lvl, _ = overheat(df)
+        act = position_action(buy, price, t, r, lvl, bull)
+        if not act:
+            continue
+        line = f"• **{name}** {price:,}원 — {act}"
+        if act.startswith(("🔥", "💰")):
+            take_profit.append(line)
+        elif act.startswith("✂️"):
+            cut_loss.append(line)
+        elif act.startswith(("🔄", "📈")):
+            add_more.append(line)
+        # ✅ 보유 지속 / ⏸️ 관망 → 알림 생략(노이즈 방지)
 
-    if not (buy_trend or buy_rev or take_profit):
-        print("강한 신호 없음 — 알림 생략")
+    if not (take_profit or cut_loss or add_more):
+        print("행동 제안 없음 — 알림 생략")
         return
 
-    lines = [f"📊 **트레이딩 신호 알림** (장 시작 전 · {ref_date} 종가 기준)",
+    lines = [f"📊 **포트폴리오 매매 제안** (장 시작 전 · {ref_date} 종가 기준)",
              f"시장: {'📈 상승추세' if bull else '📉 하락추세(추세매수 보류)'}"]
     if take_profit:
-        lines += ["", "🔥 **과열 — 시초가 일부 익절 고려**"] + take_profit
-    if buy_trend:
-        lines += ["", "📈 **추세 매수**"] + buy_trend
-    if buy_rev:
-        lines += ["", "🔄 **반등 매수**"] + buy_rev
-    lines += ["", "_참고용 신호입니다. 매매 결정은 본인 판단._"]
+        lines += ["", "💰 **익절 고려** (시초가 일부 매도)"] + take_profit
+    if cut_loss:
+        lines += ["", "✂️ **손절 검토**"] + cut_loss
+    if add_more:
+        lines += ["", "📈 **추가매수·추매 여지**"] + add_more
+    lines += ["", "_내 매수가·손익 + 기술신호 기준. 매매 결정은 본인 판단._"]
 
     msg = "\n".join(lines)[:1900]
     resp = requests.post(webhook, json={"content": msg}, timeout=15)
