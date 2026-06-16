@@ -20,25 +20,25 @@ import requests
 import FinanceDataReader as fdr
 
 
-# 뉴스 → 테마 키워드 (테마명, [키워드], 업종)
+# 뉴스 → 테마 키워드 (테마명, [키워드], 업종, [대표 대장주])
 THEME_KEYWORDS = [
-    ("금리/성장주", ["금리", "인하", "인상", "FOMC", "연준", "기준금리", "동결", "파월"], "반도체·바이오·2차전지"),
-    ("AI/반도체", ["AI", "인공지능", "엔비디아", "데이터센터", "HBM", "반도체", "메모리", "D램", "TSMC", "GPU"], "반도체·전력설비"),
-    ("환율/수출주", ["환율", "원달러", "원/달러", "달러", "강달러", "약달러"], "반도체·자동차·조선"),
-    ("유가/에너지", ["유가", "원유", "OPEC", "WTI", "정유", "감산"], "정유·LNG / 항공·운송"),
-    ("방산", ["방산", "무기", "국방", "K방산", "한화에어로", "미사일"], "방산"),
-    ("전쟁/재건", ["전쟁", "종전", "휴전", "이스라엘", "이란", "우크라", "러시아", "재건", "정전"], "방산·건설·철강"),
-    ("원전/SMR", ["원전", "SMR", "원자력", "소형모듈"], "원전 기자재"),
-    ("2차전지", ["2차전지", "전기차", "배터리", "양극재", "리튬", "전고체"], "2차전지"),
-    ("조선", ["조선", "선박", "수주", "LNG선"], "조선"),
-    ("중국소비", ["중국", "위안", "단체관광", "면세", "유커", "광군제"], "화장품·면세점·엔터"),
-    ("바이오", ["바이오", "신약", "임상", "FDA", "제약", "백신"], "바이오"),
-    ("건설/부동산", ["건설", "부동산", "재건축", "SOC", "주택", "분양"], "건설·시멘트"),
-    ("전력설비", ["전력", "변압기", "송전", "전선", "그리드", "전력망"], "변압기·전선"),
-    ("우주항공", ["우주", "발사체", "누리호", "위성", "항공우주"], "항공우주"),
-    ("로봇", ["로봇", "휴머노이드", "자동화"], "자동화"),
-    ("코인/블록체인", ["비트코인", "가상자산", "코인", "블록체인", "가상화폐", "이더리움"], "거래소·블록체인"),
-    ("금", ["금값", "금 가격", "안전자산", "골드"], "금 관련주"),
+    ("금리/성장주", ["금리", "인하", "인상", "FOMC", "연준", "기준금리", "동결", "파월"], "반도체·바이오·2차전지", ["삼성전자", "SK하이닉스", "NAVER"]),
+    ("AI/반도체", ["AI", "인공지능", "엔비디아", "데이터센터", "HBM", "반도체", "메모리", "D램", "TSMC", "GPU"], "반도체·전력설비", ["삼성전자", "SK하이닉스", "한미반도체"]),
+    ("환율/수출주", ["환율", "원달러", "원/달러", "달러", "강달러", "약달러"], "반도체·자동차·조선", ["삼성전자", "현대차", "HD현대중공업"]),
+    ("유가/에너지", ["유가", "원유", "OPEC", "WTI", "정유", "감산"], "정유·LNG / 항공·운송", ["S-Oil", "SK이노베이션", "GS"]),
+    ("방산", ["방산", "무기", "국방", "K방산", "한화에어로", "미사일"], "방산", ["한화에어로스페이스", "LIG넥스원", "현대로템"]),
+    ("전쟁/재건", ["전쟁", "종전", "휴전", "이스라엘", "이란", "우크라", "러시아", "재건", "정전"], "방산·건설·철강", ["한화에어로스페이스", "현대건설", "대우건설"]),
+    ("원전/SMR", ["원전", "SMR", "원자력", "소형모듈"], "원전 기자재", ["두산에너빌리티", "한전기술", "비에이치아이"]),
+    ("2차전지", ["2차전지", "전기차", "배터리", "양극재", "리튬", "전고체"], "2차전지", ["LG에너지솔루션", "에코프로비엠", "POSCO홀딩스"]),
+    ("조선", ["조선", "선박", "수주", "LNG선"], "조선", ["HD한국조선해양", "삼성중공업", "한화오션"]),
+    ("중국소비", ["중국", "위안", "단체관광", "면세", "유커", "광군제"], "화장품·면세점·엔터", ["아모레퍼시픽", "호텔신라", "신세계"]),
+    ("바이오", ["바이오", "신약", "임상", "FDA", "제약", "백신"], "바이오", ["삼성바이오로직스", "셀트리온", "알테오젠"]),
+    ("건설/부동산", ["건설", "부동산", "재건축", "SOC", "주택", "분양"], "건설·시멘트", ["현대건설", "GS건설", "대우건설"]),
+    ("전력설비", ["전력", "변압기", "송전", "전선", "그리드", "전력망"], "변압기·전선", ["HD현대일렉트릭", "LS ELECTRIC", "효성중공업"]),
+    ("우주항공", ["우주", "발사체", "누리호", "위성", "항공우주"], "항공우주", ["한화에어로스페이스", "한국항공우주", "쎄트렉아이"]),
+    ("로봇", ["로봇", "휴머노이드", "자동화"], "자동화", ["두산로보틱스", "레인보우로보틱스", "에스피지"]),
+    ("코인/블록체인", ["비트코인", "가상자산", "코인", "블록체인", "가상화폐", "이더리움"], "거래소·블록체인", ["우리기술투자", "한화투자증권", "위지트"]),
+    ("금", ["금값", "금 가격", "안전자산", "골드"], "금 관련주", ["고려아연", "엘컴텍", "이그잭스"]),
 ]
 
 
@@ -64,12 +64,59 @@ def fetch_news_titles(limit=35):
 
 def analyze_news_themes(titles):
     out = []
-    for theme, kws, sectors in THEME_KEYWORDS:
+    for theme, kws, sectors, leaders in THEME_KEYWORDS:
         hits = sum(1 for t in titles if any(k in t for k in kws))
         if hits:
-            out.append({"theme": theme, "count": hits, "sectors": sectors})
+            out.append({"theme": theme, "count": hits, "sectors": sectors, "leaders": leaders})
     out.sort(key=lambda x: x["count"], reverse=True)
     return out
+
+
+def get_naver_themes():
+    """네이버 테마 시세 (등락률+주도주). [{name,chg,chg3,leads}]."""
+    from bs4 import BeautifulSoup
+    themes = []
+    for page in (1, 2, 3, 4, 5, 6):
+        try:
+            r = requests.get(
+                f"https://finance.naver.com/sise/theme.naver?&page={page}",
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            r.encoding = "euc-kr"
+            rows = BeautifulSoup(r.text, "html.parser").select("table.type_1 tr")
+        except Exception:
+            break
+        found = False
+        for tr in rows:
+            a = tr.select_one("td.col_type1 a")
+            tds = tr.select("td")
+            if not a or len(tds) < 8:
+                continue
+
+            def _pct(t):
+                try:
+                    return float(t.replace("%", "").replace("+", "").replace(",", ""))
+                except Exception:
+                    return None
+
+            leads = [x.get_text(strip=True) for x in (tds[6].select("a") + tds[7].select("a"))]
+            themes.append({
+                "name": a.get_text(strip=True),
+                "chg": _pct(tds[1].get_text(strip=True)),
+                "chg3": _pct(tds[2].get_text(strip=True)),
+                "leads": [x for x in leads if x][:3],
+            })
+            found = True
+        if not found:
+            break
+    return [t for t in themes if t["chg"] is not None]
+
+
+def early_momentum_themes(themes, top=3):
+    """막 살아나는 테마: 3일 상승 + 오늘 가속 + 아직 +4% 미만."""
+    cand = [t for t in themes if t["chg3"] is not None
+            and t["chg3"] > 0 and 0 < t["chg"] < 4 and t["chg"] > t["chg3"] / 3.0]
+    cand.sort(key=lambda x: x["chg"] - x["chg3"] / 3.0, reverse=True)
+    return cand[:top]
 
 
 def add_indicators(df):
@@ -237,10 +284,14 @@ def main():
             add_more.append(line)
         # ✅ 보유 지속 / ⏸️ 관망 → 알림 생략(노이즈 방지)
 
-    # 오늘 뜨는 이슈 테마 (2일치 뉴스 분석)
+    # 오늘 뜨는 이슈 테마 (2일치 뉴스 분석) + 막 살아나는 테마 (네이버)
     news_themes = analyze_news_themes(fetch_news_titles())
+    try:
+        rising = early_momentum_themes(get_naver_themes())
+    except Exception:
+        rising = []
 
-    if not (take_profit or cut_loss or add_more or news_themes):
+    if not (take_profit or cut_loss or add_more or news_themes or rising):
         print("제안·테마 없음 — 알림 생략")
         return
 
@@ -248,7 +299,12 @@ def main():
              f"시장: {'📈 상승추세' if bull else '📉 하락추세(추세매수 보류)'}"]
     if news_themes:
         lines += ["", "📰 **오늘 뜨는 이슈 테마** (2일 뉴스)"]
-        lines += [f"• {t['theme']} `{t['count']}건` — {t['sectors']}" for t in news_themes[:5]]
+        lines += [f"• {t['theme']} `{t['count']}건` — {t['sectors']} · 대장주: {', '.join(t['leaders'][:3])}"
+                  for t in news_themes[:5]]
+    if rising:
+        lines += ["", "🌱 **막 살아나는 테마** (선점 후보)"]
+        lines += [f"• {t['name']} {t['chg']:+.1f}% (3일 {t['chg3']:+.1f}%) · 대장주: {', '.join(t['leads'][:3])}"
+                  for t in rising]
     if take_profit:
         lines += ["", "💰 **익절 고려** (시초가 일부 매도)"] + take_profit
     if cut_loss:

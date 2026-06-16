@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: 패키지 설치
-        run: pip install finance-datareader pandas numpy requests
+        run: pip install finance-datareader pandas numpy requests beautifulsoup4
       - name: 신호 점검 및 알림
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
