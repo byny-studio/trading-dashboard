@@ -668,6 +668,34 @@ def overheat_signal(df: pd.DataFrame) -> dict:
     return {"level": 0, "text": "", "conds": conds, "met": met}
 
 
+def position_action(buy_price, cur_price, trend, rev, oh_level, market_bullish=True):
+    """내 매수가·손익 + 기술 신호를 합친 종목별 행동 제안.
+    매수가가 없으면 빈 문자열(포지션 정보 없음)."""
+    if not buy_price or buy_price <= 0 or not cur_price:
+        return ""
+    pl = (cur_price - buy_price) / buy_price * 100
+    p = f"{pl:+.1f}%"
+    # 1) 과열 + 수익 → 익절
+    if oh_level >= 2 and pl > 0:
+        return f"🔥 익절 고려 · 손익 {p} (과열)"
+    # 2) 큰 수익인데 추세 둔화 → 익절
+    if pl >= 20 and not (market_bullish and trend >= 55):
+        return f"💰 익절 고려 · 손익 {p} (추세 둔화)"
+    # 3) 손실 + 추세 약세 → 손절 검토 (단 강한 반등신호면 제외)
+    if pl <= -8 and trend <= 40 and rev < 70:
+        return f"✂️ 손절 검토 · 손익 {p} (추세 약세)"
+    # 4) 손실 + 강한 반등 신호 → 추매(물타기) 고려
+    if pl < 0 and rev >= 70:
+        return f"🔄 추매(물타기) 고려 · 손익 {p} (반등 신호)"
+    # 5) 수익 + 강한 추세(상승장) → 보유·추가 여지
+    if pl >= 0 and market_bullish and trend >= 70:
+        return f"📈 보유·추가매수 여지 · 손익 {p} (추세 강함)"
+    if pl >= 0 and market_bullish and trend >= 55:
+        return f"✅ 보유 지속 · 손익 {p}"
+    # 6) 그 외
+    return f"⏸️ 관망 · 손익 {p}"
+
+
 # ===== 돌파 매수 신호 (포트폴리오용) =====
 def breakout_signal(df: pd.DataFrame) -> dict:
     """돌파 매수 신호: ① 거래량 > 20일 평균 거래량 × 2 ② 종가 > 직전 20거래일 최고가.
@@ -1334,6 +1362,13 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
         else:
             st.warning(f"{oh['text']}  —  {met_conds}")
 
+    # 내 매수가·손익 기준 행동 제안 (매수가 입력 시)
+    if buy_price > 0:
+        _act = position_action(buy_price, int(last["Close"]), tr["total"], rv["total"],
+                               oh["level"], _mkt.get("bullish", True))
+        if _act:
+            st.info(f"👉 **내 포지션 기준 제안:** {_act}")
+
     cda, cdb = st.columns(2)
     with cda:
         st.markdown("**📈 추세 점수 상세**")
@@ -1709,9 +1744,15 @@ else:  # 포트폴리오 관리
                 _t = trend_score(df_ind)["total"]
                 _r = reversion_score(df_ind)["total"]
                 _oh = overheat_signal(df_ind)
-                _oh_tag = (_oh["text"] + " · ") if _oh["level"] == 2 else ("⚠️과열 · " if _oh["level"] == 1 else "")
-                signal_text = f"{_oh_tag}{dual_verdict(_t, _r, _mkt_bull)} (📈{_t} 🔄{_r})"
                 cur_price = int(df_ind.iloc[-1]["Close"])
+                _buy = item.get("buy_price", 0) or 0
+                _action = position_action(_buy, cur_price, _t, _r, _oh["level"], _mkt_bull)
+                if _action:
+                    # 매수가 있으면 내 포지션 기준 행동 제안 우선
+                    signal_text = f"{_action}  (📈{_t} 🔄{_r})"
+                else:
+                    _oh_tag = (_oh["text"] + " · ") if _oh["level"] == 2 else ("⚠️과열 · " if _oh["level"] == 1 else "")
+                    signal_text = f"{_oh_tag}{dual_verdict(_t, _r, _mkt_bull)} (📈{_t} 🔄{_r})"
             else:
                 df_ind = None
                 result = None
