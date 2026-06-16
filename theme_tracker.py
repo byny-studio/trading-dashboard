@@ -157,6 +157,46 @@ def get_theme_stocks(no: str) -> list:
     return out
 
 
+@st.cache_data(ttl=86400)
+def get_marcap_map() -> dict:
+    """종목코드 → 시가총액 (대장주 판별용, 1일 캐시)."""
+    try:
+        df = fdr.StockListing("KRX")
+        df = df[["Code", "Marcap"]].dropna()
+        df["Code"] = df["Code"].astype(str).str.zfill(6)
+        return dict(zip(df["Code"], df["Marcap"]))
+    except Exception:
+        return {}
+
+
+def _pct_to_float(txt):
+    try:
+        return float(str(txt).replace("%", "").replace("+", "").replace(",", ""))
+    except Exception:
+        return 0.0
+
+
+def analyze_theme_constituents(stocks, marcap, load_stock_data, add_indicators,
+                               trend_score, reversion_score, dual_verdict,
+                               market_bullish, limit=15):
+    """구성종목을 시총 상위 N개로 추리고 추세/반등 점수 계산. 대장주 표시."""
+    for s in stocks:
+        s["code"] = str(s.get("code", "")).zfill(6)
+        s["mcap"] = marcap.get(s["code"], 0)
+    ranked = sorted(stocks, key=lambda x: x["mcap"], reverse=True)[:limit]
+    for idx, s in enumerate(ranked):
+        s["is_leader"] = (idx == 0 and s["mcap"] > 0)
+        df = load_stock_data(s["code"]) if s["code"] else None
+        if df is None or df.empty or len(df) < 60:
+            s["trend"], s["rev"], s["verdict"] = 0, 0, "데이터 없음"
+            continue
+        di = add_indicators(df)
+        s["trend"] = trend_score(di)["total"]
+        s["rev"] = reversion_score(di)["total"]
+        s["verdict"] = dual_verdict(s["trend"], s["rev"], market_bullish)
+    return ranked
+
+
 # ===== 3. 치트시트 (사용자 제공) =====
 CHEAT_EVENT = """
 | 이벤트 | 테마 | 대표 업종 |
@@ -251,7 +291,9 @@ CHEAT_CORE10 = """
 
 
 # ===== 페이지 렌더 =====
-def render_theme_tracker(get_market_news=None):
+def render_theme_tracker(get_market_news=None, load_stock_data=None, add_indicators=None,
+                         trend_score=None, reversion_score=None, dual_verdict=None,
+                         market_bullish=True):
     st.title("🌐 테마·이슈")
 
     # --- 1. 아침 거시 체크 ---
@@ -300,21 +342,74 @@ def render_theme_tracker(get_market_news=None):
                 "주도주": ", ".join(t["leads"]),
             } for t in themes_sorted[-10:][::-1]]), use_container_width=True, hide_index=True)
 
-        # 테마 클릭 → 구성종목
-        st.markdown("#### 🔎 테마 구성종목 보기")
+        # 테마 클릭 → 구성종목 (대장주 + 추세순 카드 + 그룹 리스트)
+        st.markdown("#### 🔎 테마 구성종목 분석")
         name_to_no = {f"{t['name']} ({t['chg']:+.2f}%)": t["no"] for t in themes_sorted}
         pick = st.selectbox("테마 선택", ["선택하세요"] + list(name_to_no.keys()))
+        can_score = all(f is not None for f in
+                        (load_stock_data, add_indicators, trend_score, reversion_score, dual_verdict))
         if pick != "선택하세요":
-            with st.spinner("구성종목 불러오는 중..."):
+            with st.spinner("구성종목 분석 중... (추세 점수 계산)"):
                 stocks = get_theme_stocks(name_to_no[pick])
-            if stocks:
-                st.dataframe(pd.DataFrame([{
-                    "종목": s["name"], "코드": s["code"],
-                    "현재가": s["price"], "등락률": s["chg"],
-                } for s in stocks]), use_container_width=True, hide_index=True)
-                st.caption("👉 관심 종목은 '🔍 단일 종목 분석'에서 코드/이름으로 추세·반등 점수를 확인하세요.")
-            else:
+                if stocks and can_score:
+                    marcap = get_marcap_map()
+                    ranked = analyze_theme_constituents(
+                        stocks, marcap, load_stock_data, add_indicators,
+                        trend_score, reversion_score, dual_verdict, market_bullish)
+                else:
+                    ranked = []
+            if not stocks:
                 st.info("구성종목을 불러오지 못했습니다.")
+            elif not ranked:
+                # 점수 계산 불가 시 단순 표
+                st.dataframe(pd.DataFrame([{
+                    "종목": s["name"], "현재가": s["price"], "등락률": s["chg"],
+                } for s in stocks]), use_container_width=True, hide_index=True)
+            else:
+                leader = next((s for s in ranked if s.get("is_leader")), None)
+                if leader:
+                    st.markdown(
+                        f"👑 **대장주: {leader['name']}** "
+                        f"(시총 1위 · {leader['price']}원 · {leader['chg']} · 추세 {leader['trend']})"
+                    )
+
+                # 추세 강한 순 카드 4개
+                by_trend = sorted(ranked, key=lambda x: x["trend"], reverse=True)
+                cards = by_trend[:4]
+                st.markdown("**📈 추세 강한 종목 Top 4**")
+                ccols = st.columns(4)
+                for col, s in zip(ccols, cards):
+                    with col:
+                        with st.container(border=True):
+                            crown = "👑 " if s.get("is_leader") else ""
+                            st.markdown(f"**{crown}{s['name']}**")
+                            st.markdown(
+                                f"<div style='font-size:13px;line-height:1.7'>"
+                                f"{s['price']}원 · {s['chg']}<br>"
+                                f"📈 추세 <b>{s['trend']}</b> · 🔄 반등 <b>{s['rev']}</b><br>"
+                                f"{s['verdict']}</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                # 나머지 → 신호별 그룹 리스트
+                rest = by_trend[4:]
+                if rest:
+                    st.markdown("**📋 나머지 종목 (신호별 그룹)**")
+                    groups = {"📈 추세": [], "🔄 반등": [], "⏸️ 관망·기타": []}
+                    for s in rest:
+                        v = s["verdict"]
+                        key = "📈 추세" if "추세" in v else "🔄 반등" if "반등" in v else "⏸️ 관망·기타"
+                        groups[key].append(s)
+                    for gname, items in groups.items():
+                        if not items:
+                            continue
+                        st.markdown(f"**{gname}**")
+                        for s in items:
+                            crown = "👑 " if s.get("is_leader") else ""
+                            st.markdown(
+                                f"- {crown}**{s['name']}** · {s['chg']} · 📈{s['trend']} 🔄{s['rev']}"
+                            )
+                st.caption("시총 상위 15개만 분석 · 👉 종목명으로 '🔍 단일 종목 분석'에서 상세 확인")
 
     st.markdown("---")
 

@@ -1671,7 +1671,15 @@ elif mode == "🧪 백테스트":
                 )
 
 elif mode == "🌐 테마·이슈":
-    render_theme_tracker(get_market_news=get_market_news)
+    render_theme_tracker(
+        get_market_news=get_market_news,
+        load_stock_data=load_stock_data,
+        add_indicators=add_indicators,
+        trend_score=trend_score,
+        reversion_score=reversion_score,
+        dual_verdict=dual_verdict,
+        market_bullish=get_market_regime().get("bullish", True),
+    )
 
 elif mode == "🔭 종목 발굴":
     render_screener(
