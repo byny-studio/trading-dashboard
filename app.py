@@ -1678,6 +1678,7 @@ elif mode == "🌐 테마·이슈":
         trend_score=trend_score,
         reversion_score=reversion_score,
         dual_verdict=dual_verdict,
+        overheat_signal=overheat_signal,
         market_bullish=get_market_regime().get("bullish", True),
     )
 
