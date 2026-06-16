@@ -21,6 +21,7 @@ from bs4 import BeautifulSoup
 from plotly.subplots import make_subplots
 from stock_screener import render_screener
 from candle_analyzer import analyze_candle
+from theme_tracker import render_theme_tracker
 
 # ===== 페이지 설정 =====
 st.set_page_config(
@@ -1513,8 +1514,8 @@ def clear_history() -> None:
 
 
 # ===== 사이드바 =====
-MODES = ["🔍 단일 종목 분석", "📋 포트폴리오 관리", "📜 분석 기록", "🧪 백테스트", "🔭 종목 발굴"]
-MODE_KEYS = {"single": MODES[0], "portfolio": MODES[1], "history": MODES[2], "backtest": MODES[3], "screener": MODES[4]}
+MODES = ["🔍 단일 종목 분석", "📋 포트폴리오 관리", "🌐 테마·이슈", "📜 분석 기록", "🧪 백테스트", "🔭 종목 발굴"]
+MODE_KEYS = {"single": MODES[0], "portfolio": MODES[1], "theme": MODES[2], "history": MODES[3], "backtest": MODES[4], "screener": MODES[5]}
 KEY_BY_MODE = {v: k for k, v in MODE_KEYS.items()}
 
 # 새로고침 시 마지막 화면 복원: query_params → session_state
@@ -1668,6 +1669,9 @@ elif mode == "🧪 백테스트":
                     "⚠️ 과거 데이터에 최적화된 결과로 미래 수익을 보장하지 않습니다. "
                     "여러 종목·여러 기간으로 교차 검증하셔야 의미가 있습니다 (과최적화 위험)."
                 )
+
+elif mode == "🌐 테마·이슈":
+    render_theme_tracker(get_market_news=get_market_news)
 
 elif mode == "🔭 종목 발굴":
     render_screener(
