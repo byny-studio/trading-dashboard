@@ -625,6 +625,49 @@ def dual_verdict(trend_total: int, rev_total: int, market_bullish: bool = True) 
     return "⏸️ 관망"
 
 
+def overheat_signal(df: pd.DataFrame) -> dict:
+    """급등 과열 감지 → 익절 고려 경고. 점수 시스템이 못 잡는 '꼭지' 보완."""
+    if df.empty or len(df) < 6:
+        return {"level": 0, "text": "", "conds": []}
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    close = float(last["Close"])
+    rsi = last.get("RSI")
+    bb_u = last.get("BB_Upper")
+    chg1 = (close - prev["Close"]) / prev["Close"] * 100 if prev["Close"] else 0
+    close5 = float(df["Close"].iloc[-6])
+    chg5 = (close - close5) / close5 * 100 if close5 else 0
+    vol = last["Volume"]
+    vma = last.get("VOL_MA20")
+    vol_ratio = vol / vma if (pd.notna(vma) and vma > 0) else 0
+
+    c_rsi = pd.notna(rsi) and rsi >= 70
+    c_band = pd.notna(bb_u) and close >= bb_u
+    c_spike1 = chg1 >= 8
+    c_spike5 = chg5 >= 18
+    c_vol = vol_ratio >= 2
+
+    conds = [
+        (c_rsi, f"RSI {rsi:.0f} (70↑ 과매수)" if pd.notna(rsi) else "RSI 데이터 없음"),
+        (c_band, "볼린저 상단 돌파(과열)"),
+        (c_spike1, f"1일 급등 {chg1:+.1f}%"),
+        (c_spike5, f"5일 급등 {chg5:+.1f}%"),
+        (c_vol, f"거래량 {vol_ratio:.1f}배"),
+    ]
+    met = sum(1 for ok, _ in conds if ok)
+    # 강한 과열(익절 고려): 과매수+확인, 또는 급등+밴드돌파/대량거래, 또는 3개 이상 동시
+    strong = (
+        (c_rsi and (c_band or c_spike1))
+        or (c_spike1 and (c_band or c_vol))
+        or met >= 3
+    )
+    if strong:
+        return {"level": 2, "text": "🔥 과열 — 일부 익절 고려", "conds": conds, "met": met}
+    if c_band or c_spike1 or met >= 2:
+        return {"level": 1, "text": "⚠️ 과열 주의", "conds": conds, "met": met}
+    return {"level": 0, "text": "", "conds": conds, "met": met}
+
+
 # ===== 돌파 매수 신호 (포트폴리오용) =====
 def breakout_signal(df: pd.DataFrame) -> dict:
     """돌파 매수 신호: ① 거래량 > 20일 평균 거래량 × 2 ② 종가 > 직전 20거래일 최고가.
@@ -1282,6 +1325,15 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
     st.markdown(f"#### 신호: {verdict}")
     st.caption("📈 추세=오르는 흐름에 올라타기 · 🔄 반등=많이 빠진 종목의 반등 노리기 (둘은 반대 전략)")
 
+    # 급등 과열 경고 (점수 시스템이 못 잡는 꼭지 보완)
+    oh = overheat_signal(df_ind)
+    if oh["level"] >= 1:
+        met_conds = " · ".join(desc for ok, desc in oh["conds"] if ok)
+        if oh["level"] == 2:
+            st.error(f"{oh['text']}  —  {met_conds}\n\n급등 과열 구간입니다. 분할 익절(일부 매도)로 수익을 확정하는 것을 고려하세요.")
+        else:
+            st.warning(f"{oh['text']}  —  {met_conds}")
+
     cda, cdb = st.columns(2)
     with cda:
         st.markdown("**📈 추세 점수 상세**")
@@ -1656,7 +1708,9 @@ else:  # 포트폴리오 관리
                 result = score_signal(df_ind)
                 _t = trend_score(df_ind)["total"]
                 _r = reversion_score(df_ind)["total"]
-                signal_text = f"{dual_verdict(_t, _r, _mkt_bull)} (📈{_t} 🔄{_r})"
+                _oh = overheat_signal(df_ind)
+                _oh_tag = (_oh["text"] + " · ") if _oh["level"] == 2 else ("⚠️과열 · " if _oh["level"] == 1 else "")
+                signal_text = f"{_oh_tag}{dual_verdict(_t, _r, _mkt_bull)} (📈{_t} 🔄{_r})"
                 cur_price = int(df_ind.iloc[-1]["Close"])
             else:
                 df_ind = None
