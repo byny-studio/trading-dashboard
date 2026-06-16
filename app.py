@@ -201,6 +201,40 @@ def is_mobile() -> bool:
     return any(k in ua for k in ("iphone", "android", "ipad", "ipod", "mobile"))
 
 
+# ===== 시장 추세 필터 (KOSPI 200일선) =====
+@st.cache_data(ttl=3600)
+def get_market_uptrend_series() -> pd.Series:
+    """KOSPI가 200일선 위인지(상승추세) 날짜별 불리언 Series. 백테스트 시장필터용."""
+    try:
+        end = datetime.now()
+        start = end - timedelta(days=1850 + 300)
+        df = fdr.DataReader("KS11", start, end)
+        if df is None or df.empty or len(df) < 200:
+            return pd.Series(dtype=bool)
+        ma200 = df["Close"].rolling(200).mean()
+        up = (df["Close"] >= ma200)
+        up.index = pd.to_datetime(up.index)
+        return up.dropna()
+    except Exception:
+        return pd.Series(dtype=bool)
+
+
+@st.cache_data(ttl=3600)
+def get_market_regime() -> dict:
+    """현재 시장(KOSPI) 추세 상태. {'ok','bullish','index','ma200'}."""
+    up = get_market_uptrend_series()
+    if up.empty:
+        return {"ok": False, "bullish": True}
+    try:
+        end = datetime.now()
+        df = fdr.DataReader("KS11", end - timedelta(days=400), end)
+        cur = float(df["Close"].iloc[-1])
+        ma200 = float(df["Close"].rolling(200).mean().iloc[-1])
+        return {"ok": True, "bullish": cur >= ma200, "index": cur, "ma200": ma200}
+    except Exception:
+        return {"ok": True, "bullish": bool(up.iloc[-1])}
+
+
 # ===== 펀더멘털 (PER/PBR/배당률) =====
 def _to_num(text):
     if text is None:
@@ -573,16 +607,19 @@ def reversion_score(df: pd.DataFrame) -> dict:
     return {"total": sum(v[0] for v in d.values()) * 4, "details": d}
 
 
-def dual_verdict(trend_total: int, rev_total: int) -> str:
-    """추세·반등 점수로 자동 판정."""
-    if trend_total >= 70:
+def dual_verdict(trend_total: int, rev_total: int, market_bullish: bool = True) -> str:
+    """추세·반등 점수로 자동 판정. 추세 매수는 시장이 상승추세일 때만 인정(가짜 신호 제거)."""
+    # 추세 매수: KOSPI 200일선 위(상승장)일 때만 인정
+    if market_bullish and trend_total >= 70:
         return "📈 추세 매수"
     if rev_total >= 70:
         return "🔄 반등 매수"
-    if trend_total >= 55:
+    if market_bullish and trend_total >= 55:
         return "📈 추세 양호"
     if rev_total >= 55:
         return "🔄 반등 주목"
+    if not market_bullish and trend_total >= 55:
+        return "🛑 추세신호(장세 약세→보류)"
     if trend_total <= 24 and rev_total <= 24:
         return "⚠️ 약세(관망)"
     return "⏸️ 관망"
@@ -635,14 +672,22 @@ def compute_daily_scores(df_full: pd.DataFrame) -> list:
     if df_full is None or df_full.empty or len(df_full) < 80:
         return []
     df_ind = add_indicators(df_full)
+    mkt = get_market_uptrend_series()
     out = []
     for i in range(60, len(df_ind)):
         window = df_ind.iloc[: i + 1]
+        date = window.index[-1]
+        if mkt is not None and not mkt.empty:
+            v = mkt.asof(pd.to_datetime(date))
+            market_ok = True if pd.isna(v) else bool(v)
+        else:
+            market_ok = True
         out.append({
-            "date": window.index[-1],
+            "date": date,
             "price": float(window.iloc[-1]["Close"]),
             "trend": trend_score(window)["total"],
             "reversion": reversion_score(window)["total"],
+            "market_ok": market_ok,
         })
     return out
 
@@ -653,8 +698,9 @@ def simulate_trades(
     sell_threshold: int,
     initial_capital: float = 1_000_000,
     score_key: str = "trend",
+    market_filter: bool = False,
 ) -> dict:
-    """미리 계산된 일별 점수로 매수/매도 시뮬레이션. score_key로 추세/반등 선택."""
+    """일별 점수로 매수/매도 시뮬. market_filter=True면 KOSPI 상승추세일 때만 매수."""
     if not daily_scores:
         return {}
     cash = initial_capital
@@ -676,6 +722,7 @@ def simulate_trades(
             and prev_score < buy_threshold
             and score >= buy_threshold
             and cash > 0
+            and (not market_filter or d.get("market_ok", True))
         ):
             shares = cash / price
             entry_price = price
@@ -737,6 +784,7 @@ def sweep_thresholds(
     sell_range=(20, 25, 30, 35, 40, 45),
     initial_capital: float = 1_000_000,
     score_key: str = "trend",
+    market_filter: bool = False,
 ) -> list:
     """모든 (매수, 매도) 조합 시뮬 → 결과 리스트. buy > sell 조건만."""
     results = []
@@ -744,7 +792,8 @@ def sweep_thresholds(
         for s in sell_range:
             if b <= s:
                 continue
-            sim = simulate_trades(daily_scores, b, s, initial_capital, score_key=score_key)
+            sim = simulate_trades(daily_scores, b, s, initial_capital,
+                                  score_key=score_key, market_filter=market_filter)
             if sim:
                 results.append({
                     "buy": b,
@@ -818,7 +867,7 @@ def render_portfolio_backtest(code: str, name: str, period_days: int = 1120) -> 
             st.warning("백테스트에 충분한 데이터가 없습니다 (최소 80일 필요).")
             return
         scores = compute_daily_scores(df_bt)
-        trend_res = sweep_thresholds(scores, score_key="trend") if scores else []
+        trend_res = sweep_thresholds(scores, score_key="trend", market_filter=True) if scores else []
         rev_res = sweep_thresholds(scores, score_key="reversion") if scores else []
     if not trend_res and not rev_res:
         st.warning("유효한 백테스트 결과를 만들지 못했습니다.")
@@ -1214,10 +1263,11 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
     fund = get_fundamentals(code)
     st.markdown(f"📊 {format_fundamentals_line(fund)}")
 
-    # 추세/반등 점수 분리 + 자동 판정
+    # 추세/반등 점수 분리 + 자동 판정 (시장 추세 필터 반영)
     tr = trend_score(df_ind)
     rv = reversion_score(df_ind)
-    verdict = dual_verdict(tr["total"], rv["total"])
+    _mkt = get_market_regime()
+    verdict = dual_verdict(tr["total"], rv["total"], _mkt.get("bullish", True))
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("현재가", f"{int(last['Close']):,}원", f"{chg:+.2f}%")
@@ -1392,6 +1442,12 @@ mode = st.sidebar.radio("어떤 작업을 하시겠어요?", MODES, key="mode", 
 st.query_params["m"] = KEY_BY_MODE[mode]
 
 st.sidebar.markdown("---")
+_reg = get_market_regime()
+if _reg.get("ok"):
+    if _reg.get("bullish"):
+        st.sidebar.success("📈 시장: 상승추세 (KOSPI 200일선 위)\n\n추세 매수 신호 정상 적용")
+    else:
+        st.sidebar.error("📉 시장: 하락추세 (KOSPI 200일선 아래)\n\n추세 매수 신호는 보류됩니다(가짜 신호 방지). 반등 신호는 유효")
 st.sidebar.caption("⚠️ 본 도구는 참고용입니다. 모든 매매 결정의 책임은 본인에게 있습니다.")
 
 
@@ -1447,7 +1503,7 @@ if mode == "🔍 단일 종목 분석":
                 "price": int(last["Close"]),
                 "change_pct": round(chg, 2),
                 "score": max(_t, _r),
-                "verdict": dual_verdict(_t, _r),
+                "verdict": dual_verdict(_t, _r, get_market_regime().get("bullish", True)),
                 "mode": "단일",
             })
 
@@ -1513,7 +1569,7 @@ elif mode == "🧪 백테스트":
                 st.error("점수 계산 실패")
             else:
                 with st.spinner("임계점 조합 시뮬 중..."):
-                    trend_res = sweep_thresholds(scores, score_key="trend")
+                    trend_res = sweep_thresholds(scores, score_key="trend", market_filter=True)
                     rev_res = sweep_thresholds(scores, score_key="reversion")
                 st.markdown(f"### {format_stock(name, code)} · {bt_period}")
                 tt, tr = st.tabs(["📈 추세 전략", "🔄 반등 전략"])
@@ -1588,6 +1644,7 @@ else:  # 포트폴리오 관리
         detail_idx = st.session_state.get("portfolio_detail")
         edit_idx = st.session_state.get("portfolio_edit")
         bt_idx = st.session_state.get("portfolio_backtest")
+        _mkt_bull = get_market_regime().get("bullish", True)
         for i, item in enumerate(portfolio):
             label = format_stock(item.get("name", ""), item.get("code", ""))
 
@@ -1599,7 +1656,7 @@ else:  # 포트폴리오 관리
                 result = score_signal(df_ind)
                 _t = trend_score(df_ind)["total"]
                 _r = reversion_score(df_ind)["total"]
-                signal_text = f"{dual_verdict(_t, _r)} (📈{_t} 🔄{_r})"
+                signal_text = f"{dual_verdict(_t, _r, _mkt_bull)} (📈{_t} 🔄{_r})"
                 cur_price = int(df_ind.iloc[-1]["Close"])
             else:
                 df_ind = None
