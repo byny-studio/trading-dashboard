@@ -402,6 +402,192 @@ def score_signal(df: pd.DataFrame) -> dict:
     return {"total": total, "details": details, "verdict": verdict}
 
 
+# ===== 추세 점수 / 반등 점수 (철학 분리) =====
+def trend_score(df: pd.DataFrame) -> dict:
+    """추세추종 점수 — '오르는 추세에 올라타기'. 5개 항목 × 5점 → 100점."""
+    if df.empty or len(df) < 60:
+        return {"total": 0, "details": {}}
+    last = df.iloc[-1]
+    d = {}
+
+    # 1. 이평선 정배열
+    mas = [last.get(f"MA{n}") for n in (5, 20, 60, 120)]
+    if all(pd.notna(mas)):
+        if mas[0] > mas[1] > mas[2] > mas[3]:
+            d["이평선 정배열"] = (5, "완벽한 정배열")
+        elif mas[0] > mas[1] > mas[2]:
+            d["이평선 정배열"] = (4, "단·중기 정배열")
+        elif mas[0] > mas[1]:
+            d["이평선 정배열"] = (3, "단기 상승")
+        elif mas[0] < mas[1] < mas[2] < mas[3]:
+            d["이평선 정배열"] = (0, "완벽한 역배열")
+        else:
+            d["이평선 정배열"] = (2, "혼조")
+    else:
+        d["이평선 정배열"] = (2, "데이터 부족")
+
+    # 2. 골든크로스 / 5일선 위치
+    if len(df) >= 2 and pd.notna(df["MA5"].iloc[-1]) and pd.notna(df["MA20"].iloc[-1]):
+        m5, m20 = df["MA5"].iloc[-1], df["MA20"].iloc[-1]
+        m5p, m20p = df["MA5"].iloc[-2], df["MA20"].iloc[-2]
+        if m5p <= m20p and m5 > m20:
+            d["크로스"] = (5, "골든크로스 발생")
+        elif m5p >= m20p and m5 < m20:
+            d["크로스"] = (0, "데드크로스 발생")
+        elif m5 > m20:
+            d["크로스"] = (4, "5일선이 20일선 위")
+        else:
+            d["크로스"] = (1, "5일선이 20일선 아래")
+    else:
+        d["크로스"] = (2, "데이터 부족")
+
+    # 3. RSI 건강구간 (추세는 50~70이 이상적, 과매도는 추세 약함)
+    rsi = last.get("RSI")
+    if pd.notna(rsi):
+        if 50 <= rsi < 70:
+            d["RSI"] = (5, f"건강한 상승 {rsi:.1f}")
+        elif rsi >= 70:
+            d["RSI"] = (3, f"과열이나 강세 {rsi:.1f}")
+        elif 40 <= rsi < 50:
+            d["RSI"] = (2, f"동력 약함 {rsi:.1f}")
+        else:
+            d["RSI"] = (0, f"추세 없음 {rsi:.1f}")
+    else:
+        d["RSI"] = (2, "데이터 부족")
+
+    # 4. 볼린저 위치 (추세는 중심선 위가 좋음)
+    close = last["Close"]
+    bu, bl = last.get("BB_Upper"), last.get("BB_Lower")
+    if pd.notna(bu) and pd.notna(bl):
+        pos = (close - bl) / (bu - bl) if bu != bl else 0.5
+        if 0.5 <= pos < 0.8:
+            d["볼린저"] = (5, "중심선 위(상승 흐름)")
+        elif pos >= 0.8:
+            d["볼린저"] = (4, "상단 근처(강세·과열)")
+        elif 0.3 <= pos < 0.5:
+            d["볼린저"] = (2, "중심선 아래")
+        else:
+            d["볼린저"] = (0, "하단권(추세 약함)")
+    else:
+        d["볼린저"] = (2, "데이터 부족")
+
+    # 5. 거래량 (추세 확인)
+    vol = last["Volume"]
+    vma = last.get("VOL_MA20")
+    if pd.notna(vma) and vma > 0:
+        r = vol / vma
+        if r >= 2.0:
+            d["거래량"] = (5, f"폭증 ({r:.1f}배)")
+        elif r >= 1.3:
+            d["거래량"] = (4, f"증가 ({r:.1f}배)")
+        elif r >= 0.8:
+            d["거래량"] = (3, f"평균 ({r:.1f}배)")
+        else:
+            d["거래량"] = (1, f"감소 ({r:.1f}배)")
+    else:
+        d["거래량"] = (2, "데이터 부족")
+
+    return {"total": sum(v[0] for v in d.values()) * 4, "details": d}
+
+
+def reversion_score(df: pd.DataFrame) -> dict:
+    """반등(역추세) 점수 — '많이 빠진 종목의 반등 노리기'. 5개 항목 × 5점 → 100점."""
+    if df.empty or len(df) < 60:
+        return {"total": 0, "details": {}}
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) >= 2 else last
+    d = {}
+
+    # 1. RSI 과매도 (낮을수록 반등 기대)
+    rsi = last.get("RSI")
+    if pd.notna(rsi):
+        if rsi < 30:
+            d["RSI 과매도"] = (5, f"과매도 {rsi:.1f}")
+        elif rsi < 40:
+            d["RSI 과매도"] = (4, f"약한 과매도 {rsi:.1f}")
+        elif rsi < 50:
+            d["RSI 과매도"] = (2, f"조정권 {rsi:.1f}")
+        else:
+            d["RSI 과매도"] = (0, f"반등 영역 아님 {rsi:.1f}")
+    else:
+        d["RSI 과매도"] = (2, "데이터 부족")
+
+    # 2. 볼린저 하단 근접
+    close = last["Close"]
+    bu, bl = last.get("BB_Upper"), last.get("BB_Lower")
+    if pd.notna(bu) and pd.notna(bl):
+        pos = (close - bl) / (bu - bl) if bu != bl else 0.5
+        if pos < 0.1:
+            d["볼린저 하단"] = (5, "밴드 하단(반등 기대)")
+        elif pos < 0.25:
+            d["볼린저 하단"] = (4, "하단권")
+        elif pos < 0.45:
+            d["볼린저 하단"] = (2, "중심선 아래")
+        else:
+            d["볼린저 하단"] = (0, "하단권 아님")
+    else:
+        d["볼린저 하단"] = (2, "데이터 부족")
+
+    # 3. MA20 이격도 (얼마나 아래로 빠졌나)
+    ma20 = last.get("MA20")
+    if pd.notna(ma20) and ma20 > 0:
+        gap = (close - ma20) / ma20
+        if gap <= -0.12:
+            d["낙폭(이격)"] = (5, f"20일선 -{abs(gap)*100:.0f}% 급락")
+        elif gap <= -0.07:
+            d["낙폭(이격)"] = (4, f"20일선 -{abs(gap)*100:.0f}%")
+        elif gap <= -0.03:
+            d["낙폭(이격)"] = (2, f"20일선 -{abs(gap)*100:.0f}%")
+        else:
+            d["낙폭(이격)"] = (1, "낙폭 작음")
+    else:
+        d["낙폭(이격)"] = (2, "데이터 부족")
+
+    # 4. 거래량 동반 (반등엔 거래 필요)
+    vol = last["Volume"]
+    vma = last.get("VOL_MA20")
+    if pd.notna(vma) and vma > 0:
+        r = vol / vma
+        if r >= 1.5:
+            d["거래량 동반"] = (5, f"거래 급증 ({r:.1f}배)")
+        elif r >= 1.0:
+            d["거래량 동반"] = (3, f"평균 이상 ({r:.1f}배)")
+        else:
+            d["거래량 동반"] = (1, f"거래 부족 ({r:.1f}배)")
+    else:
+        d["거래량 동반"] = (2, "데이터 부족")
+
+    # 5. 반등 시작 (오늘 양봉 + 직전보다 상승 전환)
+    if pd.notna(prev.get("Close")):
+        up_today = close > prev["Close"]
+        candle_up = close > last.get("Open", close)
+        if up_today and candle_up:
+            d["반등 시작"] = (5, "양봉·상승 전환")
+        elif up_today:
+            d["반등 시작"] = (3, "전일 대비 상승")
+        else:
+            d["반등 시작"] = (1, "아직 하락 중")
+    else:
+        d["반등 시작"] = (2, "데이터 부족")
+
+    return {"total": sum(v[0] for v in d.values()) * 4, "details": d}
+
+
+def dual_verdict(trend_total: int, rev_total: int) -> str:
+    """추세·반등 점수로 자동 판정."""
+    if trend_total >= 70:
+        return "📈 추세 매수"
+    if rev_total >= 70:
+        return "🔄 반등 매수"
+    if trend_total >= 55:
+        return "📈 추세 양호"
+    if rev_total >= 55:
+        return "🔄 반등 주목"
+    if trend_total <= 24 and rev_total <= 24:
+        return "⚠️ 약세(관망)"
+    return "⏸️ 관망"
+
+
 # ===== 돌파 매수 신호 (포트폴리오용) =====
 def breakout_signal(df: pd.DataFrame) -> dict:
     """돌파 매수 신호: ① 거래량 > 20일 평균 거래량 × 2 ② 종가 > 직전 20거래일 최고가.
@@ -445,18 +631,18 @@ VERDICT_TABLE = """
 
 # ===== 백테스트 =====
 def compute_daily_scores(df_full: pd.DataFrame) -> list:
-    """일별 (date, price, score) 리스트. 한 번만 계산하고 여러 시뮬에 재활용."""
+    """일별 (date, price, trend, reversion) 리스트. 지표 1회 계산 후 재사용."""
     if df_full is None or df_full.empty or len(df_full) < 80:
         return []
     df_ind = add_indicators(df_full)
     out = []
     for i in range(60, len(df_ind)):
         window = df_ind.iloc[: i + 1]
-        result = score_signal(window)
         out.append({
             "date": window.index[-1],
             "price": float(window.iloc[-1]["Close"]),
-            "score": result["total"],
+            "trend": trend_score(window)["total"],
+            "reversion": reversion_score(window)["total"],
         })
     return out
 
@@ -466,8 +652,9 @@ def simulate_trades(
     buy_threshold: int,
     sell_threshold: int,
     initial_capital: float = 1_000_000,
+    score_key: str = "trend",
 ) -> dict:
-    """미리 계산된 일별 점수로 매수/매도 시뮬레이션."""
+    """미리 계산된 일별 점수로 매수/매도 시뮬레이션. score_key로 추세/반등 선택."""
     if not daily_scores:
         return {}
     cash = initial_capital
@@ -480,7 +667,7 @@ def simulate_trades(
     prev_score = None
 
     for d in daily_scores:
-        score = d["score"]
+        score = d[score_key]
         price = d["price"]
         date = d["date"]
         if (
@@ -549,6 +736,7 @@ def sweep_thresholds(
     buy_range=(50, 55, 60, 65, 70, 75, 80),
     sell_range=(20, 25, 30, 35, 40, 45),
     initial_capital: float = 1_000_000,
+    score_key: str = "trend",
 ) -> list:
     """모든 (매수, 매도) 조합 시뮬 → 결과 리스트. buy > sell 조건만."""
     results = []
@@ -556,7 +744,7 @@ def sweep_thresholds(
         for s in sell_range:
             if b <= s:
                 continue
-            sim = simulate_trades(daily_scores, b, s, initial_capital)
+            sim = simulate_trades(daily_scores, b, s, initial_capital, score_key=score_key)
             if sim:
                 results.append({
                     "buy": b,
@@ -572,26 +760,15 @@ def sweep_thresholds(
     return results
 
 
-def render_portfolio_backtest(code: str, name: str, period_days: int = 1120) -> None:
-    """포트폴리오 행에서 펼치는 간단 백테스트 요약 (최근 3년)."""
-    if not code:
-        st.warning("종목 코드가 없어 백테스트할 수 없습니다.")
-        return
-    with st.spinner(f"{format_stock(name, code)} 백테스트 중..."):
-        df_bt = load_stock_data(code, days=period_days)
-        if df_bt.empty or len(df_bt) < 80:
-            st.warning("백테스트에 충분한 데이터가 없습니다 (최소 80일 필요).")
-            return
-        scores = compute_daily_scores(df_bt)
-        results = sweep_thresholds(scores) if scores else []
+def _render_one_backtest(results: list, label: str) -> None:
+    """한 전략(추세 또는 반등)의 백테스트 결과 블록."""
     if not results:
-        st.warning("유효한 백테스트 결과를 만들지 못했습니다.")
+        st.caption(f"{label}: 결과 없음")
         return
-
     results.sort(key=lambda x: (-x["system_return"], x["trades"]))
     best = results[0]
 
-    st.markdown(f"**🧪 {format_stock(name, code)} 백테스트 (최근 3년)**")
+    st.markdown(f"**{label}**")
     c1, c2, c3 = st.columns(3)
     c1.metric("최적 시스템", f"{best['system_return']:+.1f}%")
     c2.metric("그냥 보유(B&H)", f"{best['bh_return']:+.1f}%")
@@ -601,29 +778,21 @@ def render_portfolio_backtest(code: str, name: str, period_days: int = 1120) -> 
         f"거래 {best['trades']}회 · 승률 {best['win_rate']:.0f}% · MDD {best['mdd']:.1f}%"
     )
 
-    # 자동 해석 — 거래가 충분한(10회+) 조합 기준으로 신뢰도 판단
+    # 자동 해석 — 거래 충분한(10회+) 조합 기준
     active = [r for r in results if r["trades"] >= 10]
     active_win = [r for r in active if r["excess"] > 0]
     if not active:
-        st.info("📌 거래가 거의 일어나지 않는 종목이라 신호 매매 검증이 어렵습니다 → **보유형**에 가깝습니다.")
+        st.info("📌 거래가 거의 없어 검증 어려움 → 이 전략엔 안 맞는 종목.")
     else:
         ratio = len(active_win) / len(active)
         best_active_excess = max(r["excess"] for r in active)
+        msg = f"거래 충분한 {len(active)}개 중 {len(active_win)}개가 보유 초과 → "
         if ratio >= 0.5 and best_active_excess > 10:
-            st.success(
-                f"📌 거래 충분한 {len(active)}개 조합 중 {len(active_win)}개가 보유를 초과 → "
-                "**신호 매매가 통하는 편**입니다."
-            )
+            st.success("📌 " + msg + "**이 전략이 통하는 편**")
         elif ratio >= 0.3:
-            st.warning(
-                f"📌 거래 충분한 {len(active)}개 조합 중 {len(active_win)}개만 보유 초과 → "
-                "**애매함**. 신중히 보세요."
-            )
+            st.warning("📌 " + msg + "**애매함**")
         else:
-            st.error(
-                f"📌 거래 충분한 {len(active)}개 조합 중 {len(active_win)}개만 보유 초과 → "
-                "**자주 매매하면 보유보다 불리**할 가능성이 큽니다(보유형)."
-            )
+            st.error("📌 " + msg + "**보유가 나음(이 전략 불리)**")
 
     with st.expander("📊 전체 조합 결과 (수익률 순)"):
         st.dataframe(
@@ -636,6 +805,99 @@ def render_portfolio_backtest(code: str, name: str, period_days: int = 1120) -> 
             } for r in results]),
             use_container_width=True, hide_index=True,
         )
+
+
+def render_portfolio_backtest(code: str, name: str, period_days: int = 1120) -> None:
+    """포트폴리오 행에서 펼치는 백테스트 요약 (추세·반등 각각, 최근 3년)."""
+    if not code:
+        st.warning("종목 코드가 없어 백테스트할 수 없습니다.")
+        return
+    with st.spinner(f"{format_stock(name, code)} 백테스트 중..."):
+        df_bt = load_stock_data(code, days=period_days)
+        if df_bt.empty or len(df_bt) < 80:
+            st.warning("백테스트에 충분한 데이터가 없습니다 (최소 80일 필요).")
+            return
+        scores = compute_daily_scores(df_bt)
+        trend_res = sweep_thresholds(scores, score_key="trend") if scores else []
+        rev_res = sweep_thresholds(scores, score_key="reversion") if scores else []
+    if not trend_res and not rev_res:
+        st.warning("유효한 백테스트 결과를 만들지 못했습니다.")
+        return
+
+    st.markdown(f"**🧪 {format_stock(name, code)} 백테스트 (최근 3년)**")
+    t1, t2 = st.tabs(["📈 추세 전략", "🔄 반등 전략"])
+    with t1:
+        _render_one_backtest(trend_res, "📈 추세 점수 기준")
+    with t2:
+        _render_one_backtest(rev_res, "🔄 반등 점수 기준")
+
+
+def _render_full_backtest(results: list, label: str) -> None:
+    """백테스트 페이지용 상세 결과 (메트릭 + 자산곡선 + 표 + 거래기록)."""
+    if not results:
+        st.info(f"{label} 전략: 유효한 조합이 없습니다.")
+        return
+    results.sort(key=lambda x: (-x["system_return"], x["trades"]))
+    best = results[0]
+    bt = best["_sim"]
+
+    st.markdown(f"#### 🏆 {label} 최적: 매수 ≥ **{best['buy']}** · 매도 ≤ **{best['sell']}**")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("시스템 수익률", f"{best['system_return']:+.2f}%")
+    m2.metric("매수후보유", f"{best['bh_return']:+.2f}%")
+    m3.metric("초과 수익", f"{best['excess']:+.2f}%p")
+    m4.metric("거래 횟수", f"{best['trades']}회")
+    m5.metric("승률", f"{best['win_rate']:.1f}%")
+    st.caption(f"📉 MDD: {best['mdd']:.2f}% · 최종 평가 {int(bt['final_value']):,}원"
+               + (" · ⚠️ 종료 시점 보유 중" if bt["holding_at_end"] else ""))
+
+    # 자동 해석
+    active = [r for r in results if r["trades"] >= 10]
+    aw = [r for r in active if r["excess"] > 0]
+    if not active:
+        st.info("📌 거래가 거의 없어 검증 어려움 → 이 전략엔 안 맞는 종목.")
+    else:
+        ratio = len(aw) / len(active)
+        bx = max(r["excess"] for r in active)
+        m = f"거래 충분한 {len(active)}개 중 {len(aw)}개가 보유 초과 → "
+        if ratio >= 0.5 and bx > 10:
+            st.success("📌 " + m + "**이 전략이 통하는 편**")
+        elif ratio >= 0.3:
+            st.warning("📌 " + m + "**애매함**")
+        else:
+            st.error("📌 " + m + "**보유가 나음(이 전략 불리)**")
+
+    # 자산 곡선
+    eq_df = pd.DataFrame(bt["equity"])
+    fp = eq_df.iloc[0]["price"]
+    eq_df["bh_value"] = bt["initial_capital"] * (eq_df["price"] / fp)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=eq_df["date"], y=eq_df["value"],
+                             name="시스템", line=dict(color="#22C55E", width=2)))
+    fig.add_trace(go.Scatter(x=eq_df["date"], y=eq_df["bh_value"],
+                             name="매수후보유", line=dict(color="#A1A1AA", dash="dot")))
+    fig.update_layout(height=360, margin=dict(t=30),
+                      yaxis_tickformat=",.0f", yaxis_ticksuffix="원")
+    st.plotly_chart(fig, use_container_width=True, key=f"eq_{label}")
+
+    with st.expander(f"📊 전체 {len(results)}개 조합 결과 (수익률 순)"):
+        st.dataframe(pd.DataFrame([{
+            "매수≥": r["buy"], "매도≤": r["sell"],
+            "수익률": f"{r['system_return']:+.2f}%",
+            "B&H 대비": f"{r['excess']:+.2f}%p",
+            "거래": r["trades"], "승률": f"{r['win_rate']:.1f}%",
+            "MDD": f"{r['mdd']:.2f}%",
+        } for r in results]), use_container_width=True, hide_index=True, key=f"tbl_{label}")
+
+    if bt["trades"]:
+        with st.expander(f"📜 최적 조합 거래 기록 ({len(bt['trades'])}건)"):
+            st.dataframe(pd.DataFrame([{
+                "매수일": t["entry_date"].strftime("%Y-%m-%d"),
+                "매수가": f"{int(t['entry_price']):,}원",
+                "매도일": t["exit_date"].strftime("%Y-%m-%d"),
+                "매도가": f"{int(t['exit_price']):,}원",
+                "수익률": f"{t['profit_pct']:+.2f}%",
+            } for t in bt["trades"]]), use_container_width=True, hide_index=True, key=f"trd_{label}")
 
 
 # ===== 손절/익절 계산 =====
@@ -952,20 +1214,33 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
     fund = get_fundamentals(code)
     st.markdown(f"📊 {format_fundamentals_line(fund)}")
 
+    # 추세/반등 점수 분리 + 자동 판정
+    tr = trend_score(df_ind)
+    rv = reversion_score(df_ind)
+    verdict = dual_verdict(tr["total"], rv["total"])
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("현재가", f"{int(last['Close']):,}원", f"{chg:+.2f}%")
-    c2.metric("종합 점수", f"{result['total']}/100")
-    c3.metric("매매 신호", result["verdict"])
+    c2.metric("📈 추세 점수", f"{tr['total']}/100")
+    c3.metric("🔄 반등 점수", f"{rv['total']}/100")
     if buy_price > 0:
         pl = (last["Close"] - buy_price) / buy_price * 100
         c4.metric("평가 손익", f"{pl:+.2f}%")
+    else:
+        c4.metric("판정", verdict)
 
-    with st.expander("📖 매매 신호 기준 보기"):
-        st.markdown(VERDICT_TABLE)
+    st.markdown(f"#### 신호: {verdict}")
+    st.caption("📈 추세=오르는 흐름에 올라타기 · 🔄 반등=많이 빠진 종목의 반등 노리기 (둘은 반대 전략)")
 
-    st.markdown("### 🔬 분석 상세")
-    for k, (s, msg) in result["details"].items():
-        st.write(f"- **{k}**: {s}/5 — {msg}")
+    cda, cdb = st.columns(2)
+    with cda:
+        st.markdown("**📈 추세 점수 상세**")
+        for k, (s, msg) in tr["details"].items():
+            st.write(f"- **{k}**: {s}/5 — {msg}")
+    with cdb:
+        st.markdown("**🔄 반등 점수 상세**")
+        for k, (s, msg) in rv["details"].items():
+            st.write(f"- **{k}**: {s}/5 — {msg}")
 
     st.markdown("### 💡 매매 팁")
     tip_line, glossary_line = make_technical_tip(result)
@@ -993,9 +1268,9 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
     else:
         st.caption("📰 최근 뉴스를 가져오지 못했습니다.")
 
-    if result["total"] >= 60:
+    if tr["total"] >= 55 or rv["total"] >= 55:
         st.markdown("### 💵 매수 가격대 제안")
-        st.caption("매매 신호가 '매수 관심' 이상일 때만 노출됩니다. 분할 매수 시 단계별 진입 가격으로 활용하세요.")
+        st.caption("추세 또는 반등 점수가 충분할 때만 노출됩니다. 분할 매수 시 단계별 진입 가격으로 활용하세요.")
         for zlabel, zprice, znote in suggest_buy_zones(df_ind):
             st.write(f"- **{zlabel}**: `{zprice:,}원` — {znote}")
 
@@ -1159,6 +1434,8 @@ if mode == "🔍 단일 종목 분석":
         else:
             df_ind = add_indicators(df)
             result = score_signal(df_ind)
+            _t = trend_score(df_ind)["total"]
+            _r = reversion_score(df_ind)["total"]
             last = df_ind.iloc[-1]
             prev = df_ind.iloc[-2] if len(df_ind) >= 2 else last
             chg = (last["Close"] - prev["Close"]) / prev["Close"] * 100
@@ -1169,8 +1446,8 @@ if mode == "🔍 단일 종목 분석":
                 "name": name,
                 "price": int(last["Close"]),
                 "change_pct": round(chg, 2),
-                "score": result["total"],
-                "verdict": result["verdict"],
+                "score": max(_t, _r),
+                "verdict": dual_verdict(_t, _r),
                 "mode": "단일",
             })
 
@@ -1222,6 +1499,7 @@ elif mode == "🧪 백테스트":
     bt_period = c2.selectbox("기간", ["1년", "2년", "3년", "5년"], index=2)
     days_map = {"1년": 400, "2년": 760, "3년": 1120, "5년": 1850}
 
+    st.caption("📈 추세 전략과 🔄 반등 전략을 따로 백테스트해, 이 종목에 어느 쪽이 맞는지 비교합니다.")
     if st.button("최적 임계점 분석", type="primary"):
         code, name, _ = resolve_stock(bt_query)
         with st.spinner(f"{format_stock(name, code)} 데이터 가져오는 중..."):
@@ -1235,82 +1513,18 @@ elif mode == "🧪 백테스트":
                 st.error("점수 계산 실패")
             else:
                 with st.spinner("임계점 조합 시뮬 중..."):
-                    results = sweep_thresholds(scores)
-                if not results:
-                    st.error("유효한 조합을 찾지 못했습니다.")
-                else:
-                    # 시스템 수익률 기준 내림차순 정렬, 동률이면 거래수 적은 쪽 우선
-                    results.sort(key=lambda x: (-x["system_return"], x["trades"]))
-                    best = results[0]
-                    bt = best["_sim"]
-
-                    st.markdown(
-                        f"### 🏆 최적 임계점: 매수 ≥ **{best['buy']}**점 · 매도 ≤ **{best['sell']}**점"
-                    )
-                    st.caption(f"📌 {format_stock(name, code)} · {bt_period} · "
-                               f"총 {len(results)}개 조합 비교")
-
-                    m1, m2, m3, m4, m5 = st.columns(5)
-                    m1.metric("시스템 수익률", f"{best['system_return']:+.2f}%")
-                    m2.metric("매수후보유", f"{best['bh_return']:+.2f}%")
-                    m3.metric("초과 수익", f"{best['excess']:+.2f}%p")
-                    m4.metric("거래 횟수", f"{best['trades']}회")
-                    m5.metric("승률", f"{best['win_rate']:.1f}%")
-                    st.caption(f"📉 MDD: {best['mdd']:.2f}% · "
-                               f"최종 평가 {int(bt['final_value']):,}원"
-                               + (" · ⚠️ 종료 시점 보유 중" if bt["holding_at_end"] else ""))
-
-                    # 자산 곡선
-                    eq_df = pd.DataFrame(bt["equity"])
-                    first_price = eq_df.iloc[0]["price"]
-                    eq_df["bh_value"] = bt["initial_capital"] * (eq_df["price"] / first_price)
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(
-                        x=eq_df["date"], y=eq_df["value"],
-                        name="시스템", line=dict(color="#22C55E", width=2),
-                    ))
-                    fig.add_trace(go.Scatter(
-                        x=eq_df["date"], y=eq_df["bh_value"],
-                        name="매수후보유", line=dict(color="#A1A1AA", dash="dot"),
-                    ))
-                    fig.update_layout(
-                        height=400, margin=dict(t=40),
-                        title="최적 조합 자산 곡선",
-                        yaxis_tickformat=",.0f", yaxis_ticksuffix="원",
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-                    # 전체 조합 비교 표
-                    with st.expander(f"📊 전체 {len(results)}개 조합 결과 (수익률 순)"):
-                        table = pd.DataFrame([{
-                            "매수≥": r["buy"],
-                            "매도≤": r["sell"],
-                            "수익률": f"{r['system_return']:+.2f}%",
-                            "B&H 대비": f"{r['excess']:+.2f}%p",
-                            "거래": r["trades"],
-                            "승률": f"{r['win_rate']:.1f}%",
-                            "MDD": f"{r['mdd']:.2f}%",
-                        } for r in results])
-                        st.dataframe(table, use_container_width=True, hide_index=True)
-
-                    # 거래 기록
-                    if bt["trades"]:
-                        with st.expander(f"📜 최적 조합 거래 기록 ({len(bt['trades'])}건)"):
-                            rows = []
-                            for t in bt["trades"]:
-                                rows.append({
-                                    "매수일": t["entry_date"].strftime("%Y-%m-%d"),
-                                    "매수가": f"{int(t['entry_price']):,}원",
-                                    "매도일": t["exit_date"].strftime("%Y-%m-%d"),
-                                    "매도가": f"{int(t['exit_price']):,}원",
-                                    "수익률": f"{t['profit_pct']:+.2f}%",
-                                })
-                            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-                    st.warning(
-                        "⚠️ 과거 데이터에 최적화된 결과로 미래 수익을 보장하지 않습니다. "
-                        "여러 종목·여러 기간으로 교차 검증하셔야 의미가 있습니다 (과최적화 위험)."
-                    )
+                    trend_res = sweep_thresholds(scores, score_key="trend")
+                    rev_res = sweep_thresholds(scores, score_key="reversion")
+                st.markdown(f"### {format_stock(name, code)} · {bt_period}")
+                tt, tr = st.tabs(["📈 추세 전략", "🔄 반등 전략"])
+                with tt:
+                    _render_full_backtest(trend_res, "추세")
+                with tr:
+                    _render_full_backtest(rev_res, "반등")
+                st.warning(
+                    "⚠️ 과거 데이터에 최적화된 결과로 미래 수익을 보장하지 않습니다. "
+                    "여러 종목·여러 기간으로 교차 검증하셔야 의미가 있습니다 (과최적화 위험)."
+                )
 
 elif mode == "🔭 종목 발굴":
     render_screener(
@@ -1351,8 +1565,15 @@ else:  # 포트폴리오 관리
         mobile = is_mobile()
         st.markdown("### 현재 보유 종목")
         st.caption("👇 종목 이름을 누르면 그 자리 바로 아래에 상세 분석이 펼쳐집니다.")
-        with st.expander("📖 매매 신호 기준 보기"):
-            st.markdown(VERDICT_TABLE)
+        with st.expander("📖 신호 보는 법 (추세/반등)"):
+            st.markdown(
+                "각 종목은 **📈 추세 점수**와 **🔄 반등 점수**(0~100)로 따로 평가됩니다.\n\n"
+                "- **📈 추세 점수 높음** → 오르는 흐름에 올라타는 전략에 적합 (정배열·골든크로스·건강한 RSI·거래량↑)\n"
+                "- **🔄 반등 점수 높음** → 많이 빠진 종목의 반등을 노리는 전략에 적합 (과매도·볼린저 하단·낙폭 과대·반등 시작)\n"
+                "- 둘은 **반대 전략**이라, 종목마다 어느 쪽이 맞는지 다릅니다. 🧪 백테스트로 확인하세요.\n\n"
+                "판정: 추세 70↑ → **📈 추세 매수**, 반등 70↑ → **🔄 반등 매수**, "
+                "55↑ → 양호/주목, 둘 다 낮으면 **⏸️ 관망**."
+            )
 
         # 데스크톱: 표 헤더 (모바일은 카드형이라 헤더 생략)
         col_widths = [2.4, 0.5, 3, 2, 1, 2, 0.6, 0.6, 0.6]
@@ -1376,7 +1597,9 @@ else:  # 포트폴리오 관리
             if not df_data.empty:
                 df_ind = add_indicators(df_data)
                 result = score_signal(df_ind)
-                signal_text = f"{result['verdict']} ({result['total']}/100)"
+                _t = trend_score(df_ind)["total"]
+                _r = reversion_score(df_ind)["total"]
+                signal_text = f"{dual_verdict(_t, _r)} (📈{_t} 🔄{_r})"
                 cur_price = int(df_ind.iloc[-1]["Close"])
             else:
                 df_ind = None
