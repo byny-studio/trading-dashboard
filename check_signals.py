@@ -98,9 +98,11 @@ def get_naver_themes():
                 except Exception:
                     return None
 
+            href = a.get("href", "")
             leads = [x.get_text(strip=True) for x in (tds[6].select("a") + tds[7].select("a"))]
             themes.append({
                 "name": a.get_text(strip=True),
+                "no": href.split("no=")[-1] if "no=" in href else "",
                 "chg": _pct(tds[1].get_text(strip=True)),
                 "chg3": _pct(tds[2].get_text(strip=True)),
                 "leads": [x for x in leads if x][:3],
@@ -111,12 +113,53 @@ def get_naver_themes():
     return [t for t in themes if t["chg"] is not None]
 
 
-def early_momentum_themes(themes, top=3):
-    """막 살아나는 테마: 3일 상승 + 오늘 가속 + 아직 +4% 미만."""
+def theme_volume_ratio(no):
+    """테마 구성종목 거래량합 ÷ 전일거래량합."""
+    from bs4 import BeautifulSoup
+    if not no:
+        return None
+    try:
+        r = requests.get(
+            f"https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no={no}",
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        r.encoding = "euc-kr"
+        soup = BeautifulSoup(r.text, "html.parser")
+    except Exception:
+        return None
+
+    def num(t):
+        try:
+            return int(t.replace(",", ""))
+        except Exception:
+            return 0
+
+    tv = tp = 0
+    for tr in soup.select("table.type_5 tbody tr"):
+        a = tr.select_one("a")
+        if not a or "code=" not in a.get("href", ""):
+            continue
+        tds = [td.get_text(strip=True) for td in tr.select("td")]
+        if len(tds) < 10:
+            continue
+        tv += num(tds[7])
+        tp += num(tds[9])
+    return (tv / tp) if tp else None
+
+
+def early_momentum_themes(themes, top=3, min_vol=1.2):
+    """막 살아나는 테마: 3일 상승 + 오늘 가속 + 아직 +4% 미만 + 거래량 증가."""
     cand = [t for t in themes if t["chg3"] is not None
             and t["chg3"] > 0 and 0 < t["chg"] < 4 and t["chg"] > t["chg3"] / 3.0]
     cand.sort(key=lambda x: x["chg"] - x["chg3"] / 3.0, reverse=True)
-    return cand[:top]
+    out = []
+    for t in cand[:15]:
+        vr = theme_volume_ratio(t.get("no", ""))
+        if vr is None or vr < min_vol:
+            continue
+        out.append({**t, "vol": vr})
+        if len(out) >= top:
+            break
+    return out
 
 
 def add_indicators(df):
@@ -302,8 +345,8 @@ def main():
         lines += [f"• {t['theme']} `{t['count']}건` — {t['sectors']} · 대장주: {', '.join(t['leaders'][:3])}"
                   for t in news_themes[:5]]
     if rising:
-        lines += ["", "🌱 **막 살아나는 테마** (선점 후보)"]
-        lines += [f"• {t['name']} {t['chg']:+.1f}% (3일 {t['chg3']:+.1f}%) · 대장주: {', '.join(t['leads'][:3])}"
+        lines += ["", "🌱 **막 살아나는 테마** (거래량 유입 동반 · 선점 후보)"]
+        lines += [f"• {t['name']} {t['chg']:+.1f}% (3일 {t['chg3']:+.1f}%, 거래량 {t.get('vol', 0):.1f}배) · 대장주: {', '.join(t['leads'][:3])}"
                   for t in rising]
     if take_profit:
         lines += ["", "💰 **익절 고려** (시초가 일부 매도)"] + take_profit

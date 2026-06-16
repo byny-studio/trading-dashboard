@@ -157,6 +157,39 @@ def get_theme_stocks(no: str) -> list:
     return out
 
 
+@st.cache_data(ttl=1800)
+def get_theme_volume_ratio(no: str):
+    """테마 구성종목 거래량합 ÷ 전일거래량합 (자금 유입 척도)."""
+    if not no:
+        return None
+    try:
+        r = requests.get(
+            f"https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no={no}",
+            headers=UA, timeout=10)
+        r.encoding = "euc-kr"
+        soup = BeautifulSoup(r.text, "html.parser")
+    except Exception:
+        return None
+
+    def num(t):
+        try:
+            return int(t.replace(",", ""))
+        except Exception:
+            return 0
+
+    tv = tp = 0
+    for tr in soup.select("table.type_5 tbody tr"):
+        a = tr.select_one("a")
+        if not a or "code=" not in a.get("href", ""):
+            continue
+        tds = [td.get_text(strip=True) for td in tr.select("td")]
+        if len(tds) < 10:
+            continue
+        tv += num(tds[7])
+        tp += num(tds[9])
+    return (tv / tp) if tp else None
+
+
 @st.cache_data(ttl=86400)
 def get_marcap_map() -> dict:
     """종목코드 → 시가총액 (대장주 판별용, 1일 캐시)."""
@@ -251,8 +284,8 @@ def analyze_news_themes(titles: list) -> list:
     return results
 
 
-def early_momentum_themes(themes: list, top=8) -> list:
-    """막 살아나는 테마: 3일 흐름 위 + 오늘 가속 + 아직 안 터짐(<4%)."""
+def early_momentum_themes(themes: list, top=8, vol_fn=None, min_vol=1.2) -> list:
+    """막 살아나는 테마: 3일 흐름 위 + 오늘 가속 + 아직 안 터짐(<4%) + (거래량 증가)."""
     cand = []
     for t in themes:
         c, c3 = t.get("chg"), t.get("chg3")
@@ -262,7 +295,18 @@ def early_momentum_themes(themes: list, top=8) -> list:
         if c3 > 0 and 0 < c < 4 and c > pace:  # 상승 흐름 + 오늘 가속 + 아직 과열 전
             cand.append(t)
     cand.sort(key=lambda x: x["chg"] - x["chg3"] / 3.0, reverse=True)  # 가속도 순
-    return cand[:top]
+    if vol_fn is None:
+        return cand[:top]
+    # 거래량 증가(자금 유입) 확인 — 상위 가속 후보부터
+    out = []
+    for t in cand[:15]:
+        vr = vol_fn(t.get("no", ""))
+        if vr is None or vr < min_vol:
+            continue
+        out.append({**t, "vol": vr})
+        if len(out) >= top:
+            break
+    return out
 
 
 # ===== 3. 치트시트 (사용자 제공) =====
@@ -434,16 +478,20 @@ def render_theme_tracker(get_market_news=None, load_stock_data=None, add_indicat
                 "주도주": ", ".join(t["leads"]),
             } for t in themes_sorted[-10:][::-1]]), use_container_width=True, hide_index=True)
 
-        # 🌱 막 살아나는 테마 (초기 모멘텀)
-        early = early_momentum_themes(themes)
-        st.markdown("**🌱 막 살아나는 테마** (아직 안 터졌지만 흐름이 위로 — 선점 후보)")
+        # 🌱 막 살아나는 테마 (초기 모멘텀 + 거래량 증가)
+        with st.spinner("초기 모멘텀 테마 확인 중 (거래량 체크)..."):
+            early = early_momentum_themes(themes, vol_fn=get_theme_volume_ratio)
+        st.markdown("**🌱 막 살아나는 테마** (흐름 위 + 거래량 유입 — 선점 후보)")
         if early:
             st.dataframe(pd.DataFrame([{
                 "테마": t["name"], "오늘": f"{t['chg']:+.2f}%",
-                "3일": f"{t['chg3']:+.2f}%", "주도주": ", ".join(t["leads"]),
+                "3일": f"{t['chg3']:+.2f}%",
+                "거래량": f"{t['vol']:.1f}배" if t.get("vol") else "-",
+                "주도주": ", ".join(t["leads"]),
             } for t in early]), use_container_width=True, hide_index=True)
+            st.caption("거래량 = 구성종목 거래량합 ÷ 전일거래량합 (1.2배 이상만 = 자금 유입 동반)")
         else:
-            st.caption("초기 모멘텀 조건(3일 상승 + 오늘 가속 + 아직 +4% 미만)에 맞는 테마가 지금은 없습니다.")
+            st.caption("조건(3일 상승 + 오늘 가속 + 4% 미만 + 거래량 1.2배↑)에 맞는 테마가 지금은 없습니다.")
 
         # 테마 클릭 → 구성종목 (대장주 + 추세순 카드 + 그룹 리스트)
         st.markdown("#### 🔎 테마 구성종목 분석")
