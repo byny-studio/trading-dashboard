@@ -9,6 +9,8 @@ GitHub Actions(cron)에서 실행. 앱 로직(추세/반등/과열/시장필터)
 import os
 import json
 import warnings
+import urllib.parse
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
 warnings.filterwarnings("ignore")
@@ -16,6 +18,58 @@ import numpy as np
 import pandas as pd
 import requests
 import FinanceDataReader as fdr
+
+
+# 뉴스 → 테마 키워드 (테마명, [키워드], 업종)
+THEME_KEYWORDS = [
+    ("금리/성장주", ["금리", "인하", "인상", "FOMC", "연준", "기준금리", "동결", "파월"], "반도체·바이오·2차전지"),
+    ("AI/반도체", ["AI", "인공지능", "엔비디아", "데이터센터", "HBM", "반도체", "메모리", "D램", "TSMC", "GPU"], "반도체·전력설비"),
+    ("환율/수출주", ["환율", "원달러", "원/달러", "달러", "강달러", "약달러"], "반도체·자동차·조선"),
+    ("유가/에너지", ["유가", "원유", "OPEC", "WTI", "정유", "감산"], "정유·LNG / 항공·운송"),
+    ("방산", ["방산", "무기", "국방", "K방산", "한화에어로", "미사일"], "방산"),
+    ("전쟁/재건", ["전쟁", "종전", "휴전", "이스라엘", "이란", "우크라", "러시아", "재건", "정전"], "방산·건설·철강"),
+    ("원전/SMR", ["원전", "SMR", "원자력", "소형모듈"], "원전 기자재"),
+    ("2차전지", ["2차전지", "전기차", "배터리", "양극재", "리튬", "전고체"], "2차전지"),
+    ("조선", ["조선", "선박", "수주", "LNG선"], "조선"),
+    ("중국소비", ["중국", "위안", "단체관광", "면세", "유커", "광군제"], "화장품·면세점·엔터"),
+    ("바이오", ["바이오", "신약", "임상", "FDA", "제약", "백신"], "바이오"),
+    ("건설/부동산", ["건설", "부동산", "재건축", "SOC", "주택", "분양"], "건설·시멘트"),
+    ("전력설비", ["전력", "변압기", "송전", "전선", "그리드", "전력망"], "변압기·전선"),
+    ("우주항공", ["우주", "발사체", "누리호", "위성", "항공우주"], "항공우주"),
+    ("로봇", ["로봇", "휴머노이드", "자동화"], "자동화"),
+    ("코인/블록체인", ["비트코인", "가상자산", "코인", "블록체인", "가상화폐", "이더리움"], "거래소·블록체인"),
+    ("금", ["금값", "금 가격", "안전자산", "골드"], "금 관련주"),
+]
+
+
+def fetch_news_titles(limit=35):
+    """최근 2일 시장 뉴스 제목 (Google News RSS)."""
+    q = "코스피 OR 증시 OR 금리 OR 환율 OR 전쟁 OR 유가 when:2d"
+    url = ("https://news.google.com/rss/search?q="
+           + urllib.parse.quote(q) + "&hl=ko&gl=KR&ceid=KR:ko")
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        root = ET.fromstring(r.content)
+    except Exception:
+        return []
+    titles = []
+    for item in root.findall(".//item")[:limit]:
+        t = (item.findtext("title") or "").strip()
+        if " - " in t:
+            t = t.rsplit(" - ", 1)[0].strip()
+        if t:
+            titles.append(t)
+    return titles
+
+
+def analyze_news_themes(titles):
+    out = []
+    for theme, kws, sectors in THEME_KEYWORDS:
+        hits = sum(1 for t in titles if any(k in t for k in kws))
+        if hits:
+            out.append({"theme": theme, "count": hits, "sectors": sectors})
+    out.sort(key=lambda x: x["count"], reverse=True)
+    return out
 
 
 def add_indicators(df):
@@ -183,19 +237,25 @@ def main():
             add_more.append(line)
         # ✅ 보유 지속 / ⏸️ 관망 → 알림 생략(노이즈 방지)
 
-    if not (take_profit or cut_loss or add_more):
-        print("행동 제안 없음 — 알림 생략")
+    # 오늘 뜨는 이슈 테마 (2일치 뉴스 분석)
+    news_themes = analyze_news_themes(fetch_news_titles())
+
+    if not (take_profit or cut_loss or add_more or news_themes):
+        print("제안·테마 없음 — 알림 생략")
         return
 
-    lines = [f"📊 **포트폴리오 매매 제안** (장 시작 전 · {ref_date} 종가 기준)",
+    lines = [f"📊 **아침 브리핑** (장 시작 전 · {ref_date} 종가 기준)",
              f"시장: {'📈 상승추세' if bull else '📉 하락추세(추세매수 보류)'}"]
+    if news_themes:
+        lines += ["", "📰 **오늘 뜨는 이슈 테마** (2일 뉴스)"]
+        lines += [f"• {t['theme']} `{t['count']}건` — {t['sectors']}" for t in news_themes[:5]]
     if take_profit:
         lines += ["", "💰 **익절 고려** (시초가 일부 매도)"] + take_profit
     if cut_loss:
         lines += ["", "✂️ **손절 검토**"] + cut_loss
     if add_more:
         lines += ["", "📈 **추가매수·추매 여지**"] + add_more
-    lines += ["", "_내 매수가·손익 + 기술신호 기준. 매매 결정은 본인 판단._"]
+    lines += ["", "_내 매수가·손익 + 기술신호 + 뉴스 테마 기준. 매매 결정은 본인 판단._"]
 
     msg = "\n".join(lines)[:1900]
     resp = requests.post(webhook, json={"content": msg}, timeout=15)
