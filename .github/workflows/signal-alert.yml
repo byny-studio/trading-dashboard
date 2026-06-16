@@ -1,0 +1,23 @@
+name: 신호 알림 (Discord)
+
+on:
+  schedule:
+    # 한국시간 월~금 08:30 (장 시작 09:00 직전) = 전날 23:30 UTC
+    - cron: "30 23 * * 0-4"
+  workflow_dispatch: {}   # 수동 실행 버튼
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 패키지 설치
+        run: pip install finance-datareader pandas numpy requests
+      - name: 신호 점검 및 알림
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          PORTFOLIO_JSON: ${{ secrets.PORTFOLIO_JSON }}
+        run: python check_signals.py
