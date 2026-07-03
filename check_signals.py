@@ -1,6 +1,7 @@
 """
 장 마감 후 포트폴리오 신호 점검 → 강한 신호가 있으면 Discord로 알림.
 GitHub Actions(cron)에서 실행. 앱 로직(추세/반등/과열/시장필터)을 자체 재현.
+시장 국면(200선 위치+완충대±2%+기울기)으로 단기/중장기 관점을 자동선택해 점수·제안에 반영.
 
 환경변수:
   DISCORD_WEBHOOK  : 디스코드 웹훅 URL
@@ -178,22 +179,31 @@ def add_indicators(df):
     return df
 
 
-def trend_score(df):
+def trend_score(df, horizon="short"):
+    """단기(MA5/20)/중장기(MA20/60) 추세 점수. app.py trend_score와 동일 규칙(정수 반환판)."""
     if df.empty or len(df) < 60:
         return 0
+    mid = horizon == "mid"
+    fast_n, slow_n = (60, 120) if mid else (5, 20)
     last = df.iloc[-1]
     v = []
     mas = [last.get(f"MA{n}") for n in (5, 20, 60, 120)]
     if all(pd.notna(mas)):
-        v.append(5 if mas[0] > mas[1] > mas[2] > mas[3] else 4 if mas[0] > mas[1] > mas[2]
-                 else 3 if mas[0] > mas[1] else 0 if mas[0] < mas[1] < mas[2] < mas[3] else 2)
+        if mid:
+            v.append(5 if mas[1] > mas[2] > mas[3] else 4 if mas[1] > mas[2]
+                     else 0 if mas[1] < mas[2] < mas[3] else 2)
+        else:
+            v.append(5 if mas[0] > mas[1] > mas[2] > mas[3] else 4 if mas[0] > mas[1] > mas[2]
+                     else 3 if mas[0] > mas[1] else 0 if mas[0] < mas[1] < mas[2] < mas[3] else 2)
     else:
         v.append(2)
-    m5, m20 = df["MA5"].iloc[-1], df["MA20"].iloc[-1]
-    m5p, m20p = df["MA5"].iloc[-2], df["MA20"].iloc[-2]
-    v.append(5 if (m5p <= m20p and m5 > m20) else 0 if (m5p >= m20p and m5 < m20) else 4 if m5 > m20 else 1)
+    cf, cs = f"MA{fast_n}", f"MA{slow_n}"
+    mf, ms = df[cf].iloc[-1], df[cs].iloc[-1]
+    mfp, msp = df[cf].iloc[-2], df[cs].iloc[-2]
+    v.append(5 if (mfp <= msp and mf > ms) else 0 if (mfp >= msp and mf < ms) else 4 if mf > ms else 1)
+    lo, hi = (45, 75) if mid else (50, 70)
     rsi = last.get("RSI")
-    v.append((5 if 50 <= rsi < 70 else 3 if rsi >= 70 else 2 if 40 <= rsi < 50 else 0) if pd.notna(rsi) else 2)
+    v.append((5 if lo <= rsi < hi else 3 if rsi >= hi else 2 if (lo - 10) <= rsi < lo else 0) if pd.notna(rsi) else 2)
     close = last["Close"]
     bu, bl = last.get("BB_Upper"), last.get("BB_Lower")
     pos = (close - bl) / (bu - bl) if (pd.notna(bu) and bu != bl) else 0.5
@@ -204,9 +214,11 @@ def trend_score(df):
     return sum(v) * 4
 
 
-def reversion_score(df):
+def reversion_score(df, horizon="short"):
+    """단기(MA20 이격)/중장기(MA60 이격, 더 깊게) 반등 점수. app.py와 동일 규칙(정수 반환판)."""
     if df.empty or len(df) < 60:
         return 0
+    mid = horizon == "mid"
     last = df.iloc[-1]
     prev = df.iloc[-2]
     v = []
@@ -216,9 +228,11 @@ def reversion_score(df):
     bu, bl = last.get("BB_Upper"), last.get("BB_Lower")
     pos = (close - bl) / (bu - bl) if (pd.notna(bu) and bu != bl) else 0.5
     v.append(5 if pos < 0.1 else 4 if pos < 0.25 else 2 if pos < 0.45 else 0)
-    ma20 = last.get("MA20")
-    gap = (close - ma20) / ma20 if (pd.notna(ma20) and ma20 > 0) else 0
-    v.append(5 if gap <= -0.12 else 4 if gap <= -0.07 else 2 if gap <= -0.03 else 1)
+    base_n = 120 if mid else 20
+    t1, t2, t3 = (-0.22, -0.13, -0.06) if mid else (-0.12, -0.07, -0.03)
+    base_ma = last.get(f"MA{base_n}")
+    gap = (close - base_ma) / base_ma if (pd.notna(base_ma) and base_ma > 0) else 0
+    v.append(5 if gap <= t1 else 4 if gap <= t2 else 2 if gap <= t3 else 1)
     vma = last.get("VOL_MA20")
     r = last["Volume"] / vma if (pd.notna(vma) and vma > 0) else 1
     v.append(5 if r >= 1.5 else 3 if r >= 1.0 else 1)
@@ -228,40 +242,45 @@ def reversion_score(df):
     return sum(v) * 4
 
 
-def overheat(df):
-    if df.empty or len(df) < 6:
+def overheat(df, horizon="short"):
+    mid = horizon == "mid"
+    win = 40 if mid else 5
+    if df.empty or len(df) < win + 1:
         return 0, []
     last, prev = df.iloc[-1], df.iloc[-2]
     close = float(last["Close"])
     rsi = last.get("RSI")
     bu = last.get("BB_Upper")
     chg1 = (close - prev["Close"]) / prev["Close"] * 100 if prev["Close"] else 0
-    c5 = float(df["Close"].iloc[-6])
-    chg5 = (close - c5) / c5 * 100 if c5 else 0
+    cw = float(df["Close"].iloc[-(win + 1)])
+    chg5 = (close - cw) / cw * 100 if cw else 0
     vma = last.get("VOL_MA20")
     vr = last["Volume"] / vma if (pd.notna(vma) and vma > 0) else 0
-    c_rsi = pd.notna(rsi) and rsi >= 70
+    rsi_hi = 78 if mid else 70
+    c_rsi = pd.notna(rsi) and rsi >= rsi_hi
     c_band = pd.notna(bu) and close >= bu
-    c_s1, c_s5, c_vol = chg1 >= 8, chg5 >= 18, vr >= 2
+    c_s1, c_s5, c_vol = chg1 >= (15 if mid else 8), chg5 >= (60 if mid else 18), vr >= 2
     tags = [t for t, ok in [
         (f"RSI{rsi:.0f}" if pd.notna(rsi) else "RSI-", c_rsi),
         ("볼린저상단", c_band), (f"1일{chg1:+.0f}%", c_s1),
-        (f"5일{chg5:+.0f}%", c_s5), (f"거래{vr:.1f}x", c_vol)] if ok]
+        (f"{win}일{chg5:+.0f}%", c_s5), (f"거래{vr:.1f}x", c_vol)] if ok]
     met = sum([c_rsi, c_band, c_s1, c_s5, c_vol])
     strong = (c_rsi and (c_band or c_s1)) or (c_s1 and (c_band or c_vol)) or met >= 3
     return (2 if strong else 1 if (c_band or c_s1 or met >= 2) else 0), tags
 
 
-def position_action(buy_price, cur_price, trend, rev, oh_level, mb=True):
+def position_action(buy_price, cur_price, trend, rev, oh_level, mb=True, horizon="short"):
     if not buy_price or buy_price <= 0 or not cur_price:
         return ""
+    mid = horizon == "mid"
+    tp, sl = (50, -18) if mid else (20, -8)
     pl = (cur_price - buy_price) / buy_price * 100
     p = f"{pl:+.1f}%"
     if oh_level >= 2 and pl > 0:
         return f"🔥 익절 고려 · 손익 {p} (과열)"
-    if pl >= 20 and not (mb and trend >= 55):
+    if pl >= tp and not (mb and trend >= 55):
         return f"💰 익절 고려 · 손익 {p} (추세 둔화)"
-    if pl <= -8 and trend <= 40 and rev < 70:
+    if pl <= sl and trend <= 40 and rev < 70:
         return f"✂️ 손절 검토 · 손익 {p} (추세 약세)"
     if pl < 0 and rev >= 70:
         return f"🔄 추매(물타기) 고려 · 손익 {p} (반등 신호)"
@@ -272,12 +291,41 @@ def position_action(buy_price, cur_price, trend, rev, oh_level, mb=True):
     return f"⏸️ 관망 · 손익 {p}"
 
 
+MKT_BAND = 0.02       # 완충대: 200일선 ±2% 안이면 '중립'(휩쏘 방지) — app.py와 동일
+MKT_SLOPE_LB = 20     # 200일선 기울기 판단 기간(거래일)
+MKT_SLOPE_TH = 0.003  # 기울기 임계: 20일간 200선 변화 ±0.3%
+
+
 def market_bullish():
+    """하위호환용: 200일선 위/아래만 (추세매수 보류 판정에 사용)."""
+    return market_regime()["bullish"]
+
+
+def market_regime():
+    """app.py get_market_regime와 동일 규칙. 200선 위치(완충대 ±2%)+기울기 결합.
+    {'bullish','regime'(상승/중립/하락),'slope','gap_pct','slope_pct'}."""
+    base = {"bullish": True, "regime": "중립", "slope": "flat", "gap_pct": 0, "slope_pct": 0}
     try:
-        df = fdr.DataReader("KS11", datetime.now() - timedelta(days=450), datetime.now())
-        return float(df["Close"].iloc[-1]) >= float(df["Close"].rolling(200).mean().iloc[-1])
+        end = datetime.now()
+        df = fdr.DataReader("KS11", end - timedelta(days=560), end)
+        ma = df["Close"].rolling(200).mean()
+        cur = float(df["Close"].iloc[-1])
+        ma200 = float(ma.iloc[-1])
+        ma_prev = float(ma.iloc[-(MKT_SLOPE_LB + 1)]) if ma.notna().sum() > MKT_SLOPE_LB else ma200
+        gap = (cur - ma200) / ma200 if ma200 else 0
+        slope_pct = (ma200 - ma_prev) / ma_prev if ma_prev else 0
+        band = "above" if gap > MKT_BAND else "below" if gap < -MKT_BAND else "within"
+        slope = "up" if slope_pct > MKT_SLOPE_TH else "down" if slope_pct < -MKT_SLOPE_TH else "flat"
+        if band == "above" and slope in ("up", "flat"):
+            regime = "상승"
+        elif band == "below" and slope in ("down", "flat"):
+            regime = "하락"
+        else:
+            regime = "중립"
+        return {"bullish": cur >= ma200, "regime": regime, "slope": slope,
+                "gap_pct": gap * 100, "slope_pct": slope_pct * 100}
     except Exception:
-        return True
+        return base
 
 
 def main():
@@ -293,9 +341,13 @@ def main():
         print("PORTFOLIO_JSON 비어있음 — 종료")
         return
 
-    bull = market_bullish()
+    reg = market_regime()
+    bull = reg["bullish"]
+    # 시장 국면따라 관점 자동선택: 상승=중장기(추세 길게) / 중립·하락=단기(방어). app.py 자동모드와 동일
+    horizon = "mid" if reg["regime"] == "상승" else "short"
+    hz_label = "📆 중장기(1~3개월)" if horizon == "mid" else "⚡ 단기(데이·스윙)"
     end = datetime.now()
-    start = end - timedelta(days=320)
+    start = end - timedelta(days=400)   # MA120 계산 위해 중장기는 데이터 더 필요
     take_profit, cut_loss, add_more = [], [], []
     ref_date = ""
 
@@ -313,9 +365,9 @@ def main():
         if last_date > ref_date:
             ref_date = last_date
         price = int(df.iloc[-1]["Close"])
-        t, r = trend_score(df), reversion_score(df)
-        lvl, _ = overheat(df)
-        act = position_action(buy, price, t, r, lvl, bull)
+        t, r = trend_score(df, horizon), reversion_score(df, horizon)
+        lvl, _ = overheat(df, horizon)
+        act = position_action(buy, price, t, r, lvl, bull, horizon)
         if not act:
             continue
         line = f"• **{name}** {price:,}원 — {act}"
@@ -338,8 +390,13 @@ def main():
         print("제안·테마 없음 — 알림 생략")
         return
 
+    _rico = {"상승": "📈", "하락": "📉", "중립": "🔄"}.get(reg["regime"], "📊")
+    _slope_txt = {"up": "200선↑", "flat": "200선→", "down": "200선↓"}.get(reg["slope"], "")
     lines = [f"📊 **아침 브리핑** (장 시작 전 · {ref_date} 종가 기준)",
-             f"시장: {'📈 상승추세' if bull else '📉 하락추세(추세매수 보류)'}"]
+             f"시장 국면: {_rico} **{reg['regime']}** "
+             f"(지수 {reg['gap_pct']:+.1f}% vs 200선 · {_slope_txt})"
+             + ("" if bull else " · 추세매수 보류"),
+             f"적용 관점: {hz_label}  _(국면 따라 자동)_"]
     if news_themes:
         lines += ["", "📰 **오늘 뜨는 이슈 테마** (2일 뉴스)"]
         lines += [f"• {t['theme']} `{t['count']}건` — {t['sectors']} · 대장주: {', '.join(t['leaders'][:3])}"

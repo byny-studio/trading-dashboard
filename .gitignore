@@ -6,6 +6,11 @@ portfolio.json
 history.json
 watchlist.json
 
+# 🤖 자동매매 코드·로그(전략·계좌 활동) — 공개 저장소에 노출 금지
+autotrade/
+CLAUDE.md
+PROJECT_OVERVIEW.md
+
 # 백업/캐시/시스템 파일
 _archive/
 __pycache__/

@@ -309,6 +309,37 @@ def early_momentum_themes(themes: list, top=8, vol_fn=None, min_vol=1.2) -> list
     return out
 
 
+def theme_reason(theme_name: str, news_titles=None, macro_hints=None) -> str:
+    """막 살아나는 테마의 한 줄 이유 추정 (뉴스 → 거시 → 업종 순)."""
+    news_titles = news_titles or []
+    macro_hints = macro_hints or []
+    name_core = theme_name.split("(")[0].strip()
+
+    # 테마명을 키워드 그룹과 매칭 (대표 업종 확보)
+    matched_kws, sectors = [], ""
+    for _theme, kws, sec in THEME_KEYWORDS:
+        if any(k in theme_name for k in kws):
+            matched_kws, sectors = kws, sec
+            break
+
+    # 1) 최근 뉴스 제목에서 근거 찾기 (테마명 핵심 → 키워드 순)
+    search_kws = [name_core] + [k for k in matched_kws if len(k) >= 2]
+    for t in news_titles:
+        if any(k and k in t for k in search_kws):
+            short = t if len(t) <= 38 else t[:38] + "…"
+            return f"📰 {short}"
+
+    # 2) 거시 방향과 매칭
+    for h in macro_hints:
+        if matched_kws and any(k in h for k in matched_kws):
+            return "🌐 " + h.replace("**", "").lstrip("📉📈🤖💱🛢️ ")
+
+    # 3) 업종 일반 설명 폴백
+    if sectors:
+        return f"💡 {sectors} — 뉴스 근거는 약하나 거래량 유입 포착"
+    return "💡 거래량·등락 흐름상 초기 자금 유입(뉴스 근거 미약)"
+
+
 # ===== 3. 치트시트 (사용자 제공) =====
 CHEAT_EVENT = """
 | 이벤트 | 테마 | 대표 업종 | 대장주 |
@@ -346,44 +377,44 @@ CHEAT_EVENT = """
 """
 
 CHEAT_REGULAR = """
-| 테마 | 대표 이슈 |
-|---|---|
-| AI | 엔비디아, 데이터센터 |
-| 반도체 | HBM, 메모리 가격 |
-| 2차전지 | 전기차 판매량 |
-| 방산 | 전쟁, 무기 수출 |
-| 원전 | 원전 수출, SMR |
-| 전력설비 | AI 전력수요 |
-| 로봇 | 자동화 |
-| 드론 | 전쟁, 물류 |
-| 우주항공 | 누리호, 우주산업 |
-| 화장품 | 중국 소비 |
-| 엔터 | K-POP, 콘텐츠 |
-| 바이오 | 신약, 백신 |
-| 재건축 | 부동산 정책 |
-| STO | 토큰증권 |
-| 블록체인 | 비트코인 |
-| LNG | 에너지 |
-| 조선 | 선박 발주 |
-| 해운 | 운임 상승 |
-| 희토류 | 중국 수출규제 |
-| 양자컴퓨터 | 기술 뉴스 |
+| 테마 | 대표 이슈 | 대장주 |
+|---|---|---|
+| AI | 엔비디아, 데이터센터 | 삼성전자, SK하이닉스, NAVER |
+| 반도체 | HBM, 메모리 가격 | 삼성전자, SK하이닉스, 한미반도체 |
+| 2차전지 | 전기차 판매량 | LG에너지솔루션, 에코프로비엠, 삼성SDI |
+| 방산 | 전쟁, 무기 수출 | 한화에어로스페이스, LIG넥스원, 현대로템 |
+| 원전 | 원전 수출, SMR | 두산에너빌리티, 한전기술, 비에이치아이 |
+| 전력설비 | AI 전력수요 | HD현대일렉트릭, LS ELECTRIC, 효성중공업 |
+| 로봇 | 자동화 | 두산로보틱스, 레인보우로보틱스, 에스피지 |
+| 드론 | 전쟁, 물류 | 한화에어로스페이스, 한화시스템, 퍼스텍 |
+| 우주항공 | 누리호, 우주산업 | 한화에어로스페이스, 한국항공우주, 쎄트렉아이 |
+| 화장품 | 중국 소비 | 아모레퍼시픽, 코스맥스, 한국콜마 |
+| 엔터 | K-POP, 콘텐츠 | 하이브, JYP Ent., 에스엠 |
+| 바이오 | 신약, 백신 | 삼성바이오로직스, 셀트리온, 유한양행 |
+| 재건축 | 부동산 정책 | 현대건설, GS건설, 대우건설 |
+| STO | 토큰증권 | 갤럭시아머니트리, 케이옥션, 미래에셋증권 |
+| 블록체인 | 비트코인 | 우리기술투자, 한화투자증권, 위지트 |
+| LNG | 에너지 | 한국가스공사, SK이노베이션, 포스코인터내셔널 |
+| 조선 | 선박 발주 | HD현대중공업, 삼성중공업, 한화오션 |
+| 해운 | 운임 상승 | HMM, 팬오션, 대한해운 |
+| 희토류 | 중국 수출규제 | 유니온, 유니온머티리얼, 노바텍 |
+| 양자컴퓨터 | 기술 뉴스 | 우리로, 코위버, 케이씨에스 |
 """
 
 CHEAT_SEASON = """
-| 시기 | 테마 | 업종 |
-|---|---|---|
-| 1~2월 | 난방 | LNG, 도시가스 |
-| 2~4월 | 황사·미세먼지 | 공기청정기, 마스크 |
-| 3~5월 | 벚꽃·여행 | 항공, 호텔 |
-| 5~8월 | 냉방 | 전력, 에어컨 |
-| 6~9월 | 태풍·장마 | 건자재, 복구 |
-| 7~8월 | 여름휴가 | 여행, 항공 |
-| 9~11월 | 독감백신 | 제약, 바이오 |
-| 10~11월 | 난방 준비 | LNG |
-| 11~12월 | 쇼핑 시즌 | 유통 |
-| 12월 | 배당 | 금융, 통신 |
-| 연말 | 산타랠리 | 대형주 |
+| 시기 | 테마 | 업종 | 대장주 |
+|---|---|---|---|
+| 1~2월 | 난방 | LNG, 도시가스 | 한국가스공사, 삼천리, 대성에너지 |
+| 2~4월 | 황사·미세먼지 | 공기청정기, 마스크 | 위닉스, 크린앤사이언스, 케이엠 |
+| 3~5월 | 벚꽃·여행 | 항공, 호텔 | 대한항공, 하나투어, 호텔신라 |
+| 5~8월 | 냉방 | 전력, 에어컨 | 한국전력, LG전자, 위니아 |
+| 6~9월 | 태풍·장마 | 건자재, 복구 | 한일시멘트, 아이에스동서, 코오롱글로벌 |
+| 7~8월 | 여름휴가 | 여행, 항공 | 하나투어, 모두투어, 제주항공 |
+| 9~11월 | 독감백신 | 제약, 바이오 | SK바이오사이언스, 녹십자, 일양약품 |
+| 10~11월 | 난방 준비 | LNG | 한국가스공사, 삼천리, 지에스이 |
+| 11~12월 | 쇼핑 시즌 | 유통 | 신세계, 롯데쇼핑, 현대백화점 |
+| 12월 | 배당 | 금융, 통신 | 삼성전자, KB금융, SK텔레콤 |
+| 연말 | 산타랠리 | 대형주 | 삼성전자, SK하이닉스, 현대차 |
 """
 
 CHEAT_CORE10 = """
@@ -400,6 +431,31 @@ CHEAT_CORE10 = """
 | ★★★★☆ | 2차전지 |
 | ★★★☆☆ | 바이오 |
 """
+
+
+def leader_theme_map():
+    """치트시트(이벤트/단골/계절)의 대장주 → 테마 역매핑 {종목명: 테마}.
+
+    포트폴리오 종목이 어느 테마 대장주인지 판별해 섹터 쏠림 진단에 사용.
+    (테마컬럼 idx, 대장주컬럼 idx)로 각 표를 파싱."""
+    out = {}
+    # 단골테마(단일·깔끔한 이름) 우선 → 계절 → 이벤트(복합명) 순. 첫 매칭이 유지됨.
+    specs = [(CHEAT_REGULAR, 0, 2), (CHEAT_SEASON, 1, 3), (CHEAT_EVENT, 1, 3)]
+    for text, ti, li in specs:
+        for line in text.strip().splitlines():
+            if not line.startswith("|") or "---" in line:
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if len(cells) <= max(ti, li):
+                continue
+            theme = cells[ti].split(",")[0].strip()      # 복합 테마는 첫 번째만
+            if theme in ("테마", "시기", "이벤트"):      # 헤더행 스킵
+                continue
+            for nm in cells[li].split(","):
+                nm = nm.strip()
+                if nm and nm not in out:                # 첫 매칭 테마 우선
+                    out[nm] = theme
+    return out
 
 
 # ===== 페이지 렌더 =====
@@ -490,6 +546,13 @@ def render_theme_tracker(get_market_news=None, load_stock_data=None, add_indicat
                 "주도주": ", ".join(t["leads"]),
             } for t in early]), use_container_width=True, hide_index=True)
             st.caption("거래량 = 구성종목 거래량합 ÷ 전일거래량합 (1.2배 이상만 = 자금 유입 동반)")
+
+            # 왜 살아나나? — 테마별 한 줄 이유 (뉴스 → 거시 → 업종)
+            mh = macro_theme_hints(macro)
+            st.markdown("**💬 왜 살아나나? (한 줄 이유)**")
+            for t in early:
+                reason = theme_reason(t["name"], news_titles, mh)
+                st.markdown(f"- **{t['name']}** `{t['chg']:+.2f}%` → {reason}")
         else:
             st.caption("조건(3일 상승 + 오늘 가속 + 4% 미만 + 거래량 1.2배↑)에 맞는 테마가 지금은 없습니다.")
 
