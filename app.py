@@ -148,6 +148,25 @@ def format_stock(name: str, code: str) -> str:
     return f"{name}({code})"
 
 
+def _relative_time(pub_str: str) -> str:
+    """RFC822 발행시각 → 상대시간 표기('방금'/'25분 전'/'3시간 전'/'2일 전')."""
+    if not pub_str:
+        return ""
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(pub_str)
+        now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+        secs = max(0, (now - dt).total_seconds())
+        if secs < 3600:
+            m = int(secs // 60)
+            return f"{m}분 전" if m >= 1 else "방금"
+        if secs < 86400:
+            return f"{int(secs // 3600)}시간 전"
+        return f"{int(secs // 86400)}일 전"
+    except Exception:
+        return ""
+
+
 @st.cache_data(ttl=1800)
 def get_market_news(n: int = 3) -> list:
     """주가 흐름에 영향을 주는 거시·시장 주요 뉴스 top N (Google News RSS, 30분 캐시)."""
@@ -187,6 +206,7 @@ def get_market_news(n: int = 3) -> list:
             "title": title,
             "source": source.strip(),
             "link": (item.findtext("link") or "").strip(),
+            "pub": (item.findtext("pubDate") or "").strip(),   # 발행시각(상대시간 계산용)
         })
         if len(news) >= n:
             break
@@ -1165,6 +1185,23 @@ def _render_one_backtest(results: list, label: str) -> None:
         else:
             st.error("📌 " + msg + "**보유가 나음(이 전략 불리)**")
 
+    # 자산 곡선 (최적 조합) — 시스템 vs 그냥 보유(B&H) 비교
+    bt = best.get("_sim")
+    if bt and bt.get("equity"):
+        eq_df = pd.DataFrame(bt["equity"])
+        fp = eq_df.iloc[0]["price"]
+        eq_df["bh_value"] = bt["initial_capital"] * (eq_df["price"] / fp)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=eq_df["date"], y=eq_df["value"],
+                                 name="시스템", line=dict(color="#22C55E", width=2)))
+        fig.add_trace(go.Scatter(x=eq_df["date"], y=eq_df["bh_value"],
+                                 name="그냥 보유", line=dict(color="#A1A1AA", dash="dot")))
+        fig.update_layout(height=280, margin=dict(t=20, b=10),
+                          yaxis_tickformat=",.0f", yaxis_ticksuffix="원",
+                          legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0))
+        st.plotly_chart(fig, use_container_width=True, key=f"eq_one_{label}")
+        st.caption("초록=이 전략대로 매매 · 회색점선=처음에 사서 계속 보유. 초록이 위면 전략이 이득.")
+
     with st.expander("📊 전체 조합 결과 (수익률 순)"):
         st.dataframe(
             pd.DataFrame([{
@@ -1852,11 +1889,13 @@ if mode == "🔍 단일 종목 분석":
             st.markdown("#### 📰 오늘의 증시 주요 뉴스 Top 3")
             st.caption("주가 흐름에 영향을 줄 만한 거시·시장 이슈 (Google News · 30분 캐시)")
             for idx, n in enumerate(market_news, 1):
-                src = f"  ·  {n['source']}" if n["source"] else ""
+                ago = _relative_time(n.get("pub", ""))
+                meta = " · ".join(x for x in [n["source"], ago] if x)
+                meta = f"  <span style='color:#A1A1AA;font-size:12px'>· {meta}</span>" if meta else ""
                 if n["link"]:
-                    st.markdown(f"**{idx}.** [{n['title']}]({n['link']}){src}")
+                    st.markdown(f"**{idx}.** [{n['title']}]({n['link']}){meta}", unsafe_allow_html=True)
                 else:
-                    st.markdown(f"**{idx}.** {n['title']}{src}")
+                    st.markdown(f"**{idx}.** {n['title']}{meta}", unsafe_allow_html=True)
     st.write("")
 
     with st.form("single_form", clear_on_submit=True):

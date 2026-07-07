@@ -392,7 +392,7 @@ def main():
 
     _rico = {"상승": "📈", "하락": "📉", "중립": "🔄"}.get(reg["regime"], "📊")
     _slope_txt = {"up": "200선↑", "flat": "200선→", "down": "200선↓"}.get(reg["slope"], "")
-    lines = [f"📊 **아침 브리핑** (장 시작 전 · {ref_date} 종가 기준)",
+    lines = [f"📊 **마감 브리핑** ({ref_date} 종가 기준 · 👉 내일 시초가 매매 참고)",
              f"시장 국면: {_rico} **{reg['regime']}** "
              f"(지수 {reg['gap_pct']:+.1f}% vs 200선 · {_slope_txt})"
              + ("" if bull else " · 추세매수 보류"),
