@@ -432,6 +432,24 @@ CHEAT_CORE10 = """
 | ★★★☆☆ | 바이오 |
 """
 
+# 장기 자산 운영 관점 (단기 테마와 별개, 오래 들고 가는 자산) — (분류, 목적, [종목명])
+# 종목명은 클릭 시 resolve_stock으로 코드 변환해 상세 분석
+LT_STOCKS = [
+    ("🛡️ 방어주", "경기 무관 안정(필수소비·통신)", ["KT&G", "SK텔레콤", "KT", "오리온", "농심"]),
+    ("💰 고배당(금융)", "배당 현금흐름", ["KB금융", "신한지주", "하나금융지주", "우리금융지주", "기업은행"]),
+    ("🏦 배당·안정(보험)", "방어+배당", ["삼성화재", "삼성생명", "DB손해보험"]),
+    ("📈 배당성장", "배당 + 주가 성장", ["삼성전자", "현대차", "기아"]),
+    ("🏢 리츠(REITs)", "부동산 임대수익 배당", ["SK리츠", "롯데리츠", "ESR켄달스퀘어리츠", "제이알글로벌리츠"]),
+]
+LT_ETFS = [
+    ("🇰🇷 코스피", "국내 대형주 분산", ["KODEX 200", "TIGER 200"]),
+    ("🇺🇸 미국 지수", "미국 대표지수 분산", ["TIGER 미국S&P500", "TIGER 미국나스닥100"]),
+    ("💵 고배당 ETF", "배당 자동 분산", ["KODEX 배당가치", "TIGER 코스피고배당"]),
+    ("🏢 리츠·인프라", "부동산 인컴 분산", ["TIGER 리츠부동산인프라"]),
+    ("🏦 채권", "안전자산·금리 대응", ["KODEX 국고채10년", "TIGER 미국채10년선물"]),
+    ("🥇 금", "인플레·위기 헤지", ["KODEX 골드선물(H)", "ACE KRX금현물"]),
+]
+
 
 def leader_theme_map():
     """치트시트(이벤트/단골/계절)의 대장주 → 테마 역매핑 {종목명: 테마}.
@@ -459,9 +477,35 @@ def leader_theme_map():
 
 
 # ===== 페이지 렌더 =====
+def _render_lt_group(groups, prefix, show_detail):
+    """장기자산 묶음을 분류별로 렌더. 종목 클릭 시 그 분류 아래에 상세 아코디언."""
+    for ci, (cat, purpose, stocks) in enumerate(groups):
+        st.markdown(
+            f"**{cat}**  <span style='color:#A1A1AA;font-size:12px'>· {purpose}</span>",
+            unsafe_allow_html=True,
+        )
+        cols = st.columns(max(len(stocks), 1))
+        for si, nm in enumerate(stocks):
+            sel = st.session_state.get("lt_selected") == nm
+            if cols[si].button(nm, key=f"lt_{prefix}_{ci}_{si}", use_container_width=True,
+                               type="primary" if sel else "secondary"):
+                st.session_state["lt_selected"] = None if sel else nm
+                st.rerun()
+        # 이 분류에 선택된 종목이 있으면 바로 아래에 상세 펼치기
+        selnm = st.session_state.get("lt_selected")
+        if selnm in stocks and show_detail:
+            with st.container(border=True):
+                hc = st.columns([6, 1])
+                hc[0].markdown(f"#### 📊 {selnm} 상세 분석")
+                if hc[1].button("✕ 닫기", key=f"lt_close_{prefix}_{ci}", use_container_width=True):
+                    st.session_state["lt_selected"] = None
+                    st.rerun()
+                show_detail(selnm)
+
+
 def render_theme_tracker(get_market_news=None, load_stock_data=None, add_indicators=None,
                          trend_score=None, reversion_score=None, dual_verdict=None,
-                         overheat_signal=None, market_bullish=True):
+                         overheat_signal=None, market_bullish=True, show_detail=None):
     st.title("🌐 테마·이슈")
 
     # --- 1. 아침 거시 체크 ---
@@ -654,3 +698,14 @@ def render_theme_tracker(get_market_news=None, load_stock_data=None, add_indicat
         st.markdown(CHEAT_SEASON)
     with st.expander("⭐ 핵심 10개 (먼저 외우기)"):
         st.markdown(CHEAT_CORE10)
+
+    # --- 5. 장기 자산 운영 관점 (방어·배당·ETF) ---
+    st.markdown("### 🏦 장기 자산 운영 관점 (방어·배당·ETF)")
+    st.caption("위 단기 테마와 별개 — 오래 들고 가는 '자산' 관점. 코어(장기 보유)-새틀라이트(단기 테마) "
+               "전략의 코어 후보. **종목명을 클릭하면 바로 상세 분석**(주식앱 검색 불필요).")
+    with st.expander("🛡️ 방어·배당·리츠 (개별주)", expanded=True):
+        _render_lt_group(LT_STOCKS, "stk", show_detail)
+    with st.expander("📊 ETF (지수·배당·채권·금 — 분산/자산배분)"):
+        _render_lt_group(LT_ETFS, "etf", show_detail)
+    st.caption("⚠️ 참고용 예시입니다. 종목코드·ETF명·배당률은 시점에 따라 바뀔 수 있으니 "
+               "매수 전 반드시 최신 정보를 확인하세요. (배당주는 배당락·실적 확인 필수)")

@@ -269,25 +269,43 @@ def overheat(df, horizon="short"):
     return (2 if strong else 1 if (c_band or c_s1 or met >= 2) else 0), tags
 
 
-def position_action(buy_price, cur_price, trend, rev, oh_level, mb=True, horizon="short"):
+def position_action(buy_price, cur_price, trend, rev, oh_level, mb=True, horizon="short",
+                    strategy="auto"):
+    """산 이유(추세/반등) 축에 맞춰 관리 — app.py position_action과 동일 규칙.
+    반등으로 산 종목을 '추세 약세'로 손절하지 않음(가짜 손절 방지)."""
     if not buy_price or buy_price <= 0 or not cur_price:
         return ""
     mid = horizon == "mid"
     tp, sl = (50, -18) if mid else (20, -8)
+    hard = sl * 2.5
     pl = (cur_price - buy_price) / buy_price * 100
     p = f"{pl:+.1f}%"
+    axis = strategy if strategy in ("trend", "reversion") else \
+        ("reversion" if rev > trend else "trend")
+
     if oh_level >= 2 and pl > 0:
         return f"🔥 익절 고려 · 손익 {p} (과열)"
-    if pl >= tp and not (mb and trend >= 55):
-        return f"💰 익절 고려 · 손익 {p} (추세 둔화)"
-    if pl <= sl and trend <= 40 and rev < 70:
-        return f"✂️ 손절 검토 · 손익 {p} (추세 약세)"
-    if pl < 0 and rev >= 70:
-        return f"🔄 추매(물타기) 고려 · 손익 {p} (반등 신호)"
-    if pl >= 0 and mb and trend >= 70:
-        return f"📈 보유·추가매수 여지 · 손익 {p} (추세 강함)"
-    if pl >= 0 and mb and trend >= 55:
-        return f"✅ 보유 지속 · 손익 {p}"
+    if pl <= hard:
+        return f"✂️ 손절 검토 · 손익 {p} (손실 과다)"
+
+    if axis == "trend":
+        if pl >= tp and trend < 55:
+            return f"💰 익절 고려 · 손익 {p} (추세 둔화)"
+        if pl <= sl and trend <= 40:
+            return f"✂️ 손절 검토 · 손익 {p} (추세 이탈)"
+        if pl >= 0 and mb and trend >= 70:
+            return f"📈 보유·추가매수 여지 · 손익 {p} (추세 강함)"
+        if trend >= 55:
+            return f"✅ 보유 지속 · 손익 {p} (추세 유효)"
+        return f"⏸️ 관망 · 손익 {p}"
+
+    rev_sl = sl * 1.6
+    if pl >= tp:
+        return f"💰 익절 고려 · 손익 {p} (반등 목표 도달)"
+    if pl <= rev_sl and rev < 50:
+        return f"✂️ 손절 검토 · 손익 {p} (반등 실패)"
+    if rev >= 55:
+        return f"⏳ 반등 대기 · 손익 {p} (반등 신호 유효)"
     return f"⏸️ 관망 · 손익 {p}"
 
 
@@ -367,7 +385,7 @@ def main():
         price = int(df.iloc[-1]["Close"])
         t, r = trend_score(df, horizon), reversion_score(df, horizon)
         lvl, _ = overheat(df, horizon)
-        act = position_action(buy, price, t, r, lvl, bull, horizon)
+        act = position_action(buy, price, t, r, lvl, bull, horizon, it.get("strategy", "auto"))
         if not act:
             continue
         line = f"• **{name}** {price:,}원 — {act}"
@@ -375,9 +393,9 @@ def main():
             take_profit.append(line)
         elif act.startswith("✂️"):
             cut_loss.append(line)
-        elif act.startswith(("🔄", "📈")):
+        elif act.startswith("📈"):
             add_more.append(line)
-        # ✅ 보유 지속 / ⏸️ 관망 → 알림 생략(노이즈 방지)
+        # ✅ 보유 지속 / ⏳ 반등 대기 / ⏸️ 관망 → 알림 생략(노이즈 방지)
 
     # 오늘 뜨는 이슈 테마 (2일치 뉴스 분석) + 막 살아나는 테마 (네이버)
     news_themes = analyze_news_themes(fetch_news_titles())

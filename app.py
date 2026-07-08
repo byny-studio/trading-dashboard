@@ -672,6 +672,49 @@ def reversion_score(df: pd.DataFrame, horizon: str = "short") -> dict:
     return {"total": sum(v[0] for v in d.values()) * 4, "details": d}
 
 
+def momentum_score(df: pd.DataFrame) -> dict:
+    """모멘텀 점수 — '최근 강하게 오르는 종목 잡기'. 5개 항목 × 5점 → 100점.
+    최근 상승률·가속·신고가 근접·거래량·강한 RSI. (종목 발굴 '모멘텀' 기준용)"""
+    if df.empty or len(df) < 120:
+        return {"total": 0, "details": {}}
+    last = df.iloc[-1]
+    close = float(last["Close"])
+    d = {}
+
+    # 1. 최근 20일(약 1개월) 수익률
+    c20 = float(df["Close"].iloc[-21]) if len(df) >= 21 else close
+    r20 = (close - c20) / c20 * 100 if c20 else 0
+    d["20일 수익률"] = (5 if r20 >= 20 else 4 if r20 >= 10 else 3 if r20 >= 3
+                       else 1 if r20 >= 0 else 0, f"{r20:+.1f}%")
+
+    # 2. 최근 5일 가속(단기 탄력)
+    c5 = float(df["Close"].iloc[-6]) if len(df) >= 6 else close
+    r5 = (close - c5) / c5 * 100 if c5 else 0
+    d["5일 가속"] = (5 if r5 >= 8 else 4 if r5 >= 3 else 3 if r5 >= 0 else 1, f"{r5:+.1f}%")
+
+    # 3. 신고가 근접도 (최근 1년 고점 대비 현재 위치)
+    win = min(252, len(df))
+    hi = float(df["Close"].iloc[-win:].max())
+    prox = close / hi if hi else 0
+    d["신고가 근접"] = (5 if prox >= 0.98 else 4 if prox >= 0.90 else 2 if prox >= 0.80
+                      else 0, f"고점의 {prox*100:.0f}%")
+
+    # 4. 거래량 증가 (모멘텀엔 거래 동반 필수)
+    vma = last.get("VOL_MA20")
+    vr = float(last["Volume"]) / vma if (pd.notna(vma) and vma > 0) else 1
+    d["거래량"] = (5 if vr >= 2 else 4 if vr >= 1.3 else 3 if vr >= 0.8 else 1, f"{vr:.1f}배")
+
+    # 5. RSI 강세구간 (모멘텀은 강한 RSI 선호, 과매도는 모멘텀 아님)
+    rsi = last.get("RSI")
+    if pd.notna(rsi):
+        d["RSI"] = (5 if 55 <= rsi < 80 else 3 if rsi >= 80 else 2 if 45 <= rsi < 55
+                    else 0, f"{rsi:.1f}")
+    else:
+        d["RSI"] = (2, "데이터 부족")
+
+    return {"total": sum(v[0] for v in d.values()) * 4, "details": d}
+
+
 def dual_verdict(trend_total: int, rev_total: int, market_bullish: bool = True) -> str:
     """추세·반등 점수로 자동 판정. 추세 매수는 시장이 상승추세일 때만 인정(가짜 신호 제거)."""
     # 추세 매수: KOSPI 200일선 위(상승장)일 때만 인정
@@ -741,34 +784,53 @@ def overheat_signal(df: pd.DataFrame, horizon: str = "short") -> dict:
 
 
 def position_action(buy_price, cur_price, trend, rev, oh_level, market_bullish=True,
-                    horizon="short"):
+                    horizon="short", strategy="auto"):
     """내 매수가·손익 + 기술 신호를 합친 종목별 행동 제안.
     매수가가 없으면 빈 문자열(포지션 정보 없음).
-    horizon: "mid"는 몇 주 보유 전제로 익절/손절폭을 넓게(+35%/-13%) 잡음."""
+
+    strategy: 종목을 '왜 샀는지'(trend=추세추종 / reversion=과매도반등)에 맞춰 관리.
+      "auto"면 현재 점수가 우세한 축으로 추론 → 반등으로 산 종목을 '추세 약하다'는
+      이유로 손절하지 않음(산 이유와 파는 이유의 축을 일치시켜 가짜 손절 방지).
+    horizon: "mid"는 손절/익절폭을 넓게(+50%/-18%)."""
     if not buy_price or buy_price <= 0 or not cur_price:
         return ""
     mid = horizon == "mid"
-    tp, sl = (50, -18) if mid else (20, -8)  # 익절 목표 / 손절 라인(중장기 1~3개월)
+    tp, sl = (50, -18) if mid else (20, -8)   # 익절 목표 / 손절 라인
+    hard = sl * 2.5                            # 치명적 손실은 축 무관 손절(short -20%/mid -45%)
     pl = (cur_price - buy_price) / buy_price * 100
     p = f"{pl:+.1f}%"
-    # 1) 과열 + 수익 → 익절
+
+    # 관리 축 결정: 태그 있으면 그대로, 없으면 우세 점수로 추론
+    axis = strategy if strategy in ("trend", "reversion") else \
+        ("reversion" if rev > trend else "trend")
+
+    # (공통) 과열 + 수익 → 익절
     if oh_level >= 2 and pl > 0:
         return f"🔥 익절 고려 · 손익 {p} (과열)"
-    # 2) 큰 수익인데 추세 둔화 → 익절
-    if pl >= tp and not (market_bullish and trend >= 55):
-        return f"💰 익절 고려 · 손익 {p} (추세 둔화)"
-    # 3) 손실 + 추세 약세 → 손절 검토 (단 강한 반등신호면 제외)
-    if pl <= sl and trend <= 40 and rev < 70:
-        return f"✂️ 손절 검토 · 손익 {p} (추세 약세)"
-    # 4) 손실 + 강한 반등 신호 → 추매(물타기) 고려
-    if pl < 0 and rev >= 70:
-        return f"🔄 추매(물타기) 고려 · 손익 {p} (반등 신호)"
-    # 5) 수익 + 강한 추세(상승장) → 보유·추가 여지
-    if pl >= 0 and market_bullish and trend >= 70:
-        return f"📈 보유·추가매수 여지 · 손익 {p} (추세 강함)"
-    if pl >= 0 and market_bullish and trend >= 55:
-        return f"✅ 보유 지속 · 손익 {p}"
-    # 6) 그 외
+    # (공통) 치명적 손실 → 축 무관 손절 (진짜 망가진 포지션은 반드시 정리)
+    if pl <= hard:
+        return f"✂️ 손절 검토 · 손익 {p} (손실 과다)"
+
+    if axis == "trend":
+        # 추세로 산 종목: 추세가 살아있으면 보유, 깨지면 손절
+        if pl >= tp and trend < 55:
+            return f"💰 익절 고려 · 손익 {p} (추세 둔화)"
+        if pl <= sl and trend <= 40:
+            return f"✂️ 손절 검토 · 손익 {p} (추세 이탈)"
+        if pl >= 0 and market_bullish and trend >= 70:
+            return f"📈 보유·추가매수 여지 · 손익 {p} (추세 강함)"
+        if trend >= 55:
+            return f"✅ 보유 지속 · 손익 {p} (추세 유효)"
+        return f"⏸️ 관망 · 손익 {p}"
+
+    # axis == "reversion": 추세 낮은 건 당연 → 추세로 손절하지 않음
+    rev_sl = sl * 1.6   # 반등은 손절 더 여유(변동성 큼): short≈-13% / mid≈-29%
+    if pl >= tp:
+        return f"💰 익절 고려 · 손익 {p} (반등 목표 도달)"
+    if pl <= rev_sl and rev < 50:
+        return f"✂️ 손절 검토 · 손익 {p} (반등 실패)"
+    if rev >= 55:
+        return f"⏳ 반등 대기 · 손익 {p} (반등 신호 유효)"
     return f"⏸️ 관망 · 손익 {p}"
 
 
@@ -806,7 +868,8 @@ def portfolio_diagnosis(portfolio, market_bullish, horizon="short"):
         buy = it.get("buy_price", 0) or 0
         rows.append({
             "name": it.get("name", code), "val": price * qty, "t": t, "r": r,
-            "act": position_action(buy, price, t, r, oh["level"], market_bullish, horizon),
+            "act": position_action(buy, price, t, r, oh["level"], market_bullish, horizon,
+                                   it.get("strategy", "auto")),
             "cap": mcap.get(code, 0), "theme": tmap.get(it.get("name", code), "기타"),
         })
     total = sum(x["val"] for x in rows)
@@ -2022,6 +2085,19 @@ elif mode == "🧪 백테스트":
                 )
 
 elif mode == "🌐 테마·이슈":
+    def _theme_show_detail(name):
+        """장기자산 종목명 클릭 → 코드 변환 후 풀 상세 분석 렌더 (현재 관점 반영)."""
+        code, nm, found = resolve_stock(name)
+        if not found:
+            st.warning(f"'{name}' 종목을 찾지 못했습니다. (종목명이 바뀌었을 수 있어요)")
+            return
+        _df = load_stock_data(code)
+        if _df.empty:
+            st.error(f"{nm} 데이터를 가져올 수 없습니다.")
+            return
+        _di = add_indicators(_df)
+        render_analysis_detail(_di, score_signal(_di), nm, code, 0, HORIZON)
+
     render_theme_tracker(
         get_market_news=get_market_news,
         load_stock_data=load_stock_data,
@@ -2031,6 +2107,7 @@ elif mode == "🌐 테마·이슈":
         dual_verdict=dual_verdict,
         overheat_signal=overheat_signal,
         market_bullish=get_market_regime().get("bullish", True),
+        show_detail=_theme_show_detail,
     )
 
 elif mode == "🔭 종목 발굴":
@@ -2038,6 +2115,11 @@ elif mode == "🔭 종목 발굴":
         load_stock_data=load_stock_data,
         add_indicators=add_indicators,
         score_signal=score_signal,
+        make_chart=make_chart,
+        trend_score=trend_score,
+        reversion_score=reversion_score,
+        momentum_score=momentum_score,
+        get_fundamentals=get_fundamentals,
     )
 
 else:  # 포트폴리오 관리
@@ -2128,7 +2210,8 @@ else:  # 포트폴리오 관리
                 _oh = overheat_signal(df_ind, HORIZON)
                 cur_price = int(df_ind.iloc[-1]["Close"])
                 _buy = item.get("buy_price", 0) or 0
-                _action = position_action(_buy, cur_price, _t, _r, _oh["level"], _mkt_bull, HORIZON)
+                _action = position_action(_buy, cur_price, _t, _r, _oh["level"], _mkt_bull, HORIZON,
+                                          item.get("strategy", "auto"))
                 if _action:
                     # 매수가 있으면 내 포지션 기준 행동 제안 우선
                     signal_text = f"{_action}  (📈{_t} 🔄{_r})"
