@@ -309,6 +309,46 @@ def position_action(buy_price, cur_price, trend, rev, oh_level, mb=True, horizon
     return f"⏸️ 관망 · 손익 {p}"
 
 
+def _num(text):
+    import re
+    if text is None:
+        return None
+    s = re.sub(r"[^\d.\-]", "", text)
+    try:
+        return float(s) if s not in ("", ".", "-") else None
+    except ValueError:
+        return None
+
+
+def get_fundamentals(code):
+    """네이버 금융 PER/PBR/EPS/배당 스크레이핑. app.py get_fundamentals와 동일(스탠드얼론)."""
+    try:
+        from bs4 import BeautifulSoup
+        url = f"https://finance.naver.com/item/main.nhn?code={code}"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+        if r.status_code != 200:
+            return {}
+        soup = BeautifulSoup(r.text, "html.parser")
+        out = {}
+        for key, eid in [("PER", "_per"), ("PBR", "_pbr"), ("EPS", "_eps"), ("DIV", "_dvr")]:
+            el = soup.select_one(f"#{eid}")
+            out[key] = _num(el.text if el else None)
+        return out
+    except Exception:
+        return {}
+
+
+def financial_health(fund):
+    """펀더멘털 → 재무 건전성. 적자(EPS≤0)면 not ok. app.py·stock_screener와 동일 규칙.
+    데이터 없으면 ok=True(보류) — 스크레이핑 실패로 정상 매수를 막지 않도록 fail-open."""
+    if not fund:
+        return {"ok": True, "grade": "❔정보없음", "reason": "재무 데이터 없음(보류)"}
+    eps = fund.get("EPS")
+    if eps is not None and eps <= 0:
+        return {"ok": False, "grade": "🔴위험", "reason": f"적자(EPS {int(eps):,})"}
+    return {"ok": True, "grade": "🟢건전", "reason": "흑자"}
+
+
 MKT_BAND = 0.02       # 완충대: 200일선 ±2% 안이면 '중립'(휩쏘 방지) — app.py와 동일
 MKT_SLOPE_LB = 20     # 200일선 기울기 판단 기간(거래일)
 MKT_SLOPE_TH = 0.003  # 기울기 임계: 20일간 200선 변화 ±0.3%

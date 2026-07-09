@@ -204,14 +204,14 @@ def render_screener(
                     continue
                 df = add_indicators(df)
                 result = mode_fn(df)
-                total = result.get("total", 0)
-                if total >= threshold:
+                sc = result.get("total", 0)   # 종목 점수 (total=유니버스 수와 이름 충돌 방지)
+                if sc >= threshold:
                     rec = {
                         "code": stock["code"],
                         "name": stock["name"],
                         "market": stock["market"],
-                        "score": total,
-                        "verdict": "🚀 강력" if total >= STRONG_THRESHOLD else "✅ 관심",
+                        "score": sc,
+                        "verdict": "🚀 강력" if sc >= STRONG_THRESHOLD else "✅ 관심",
                         "price": int(df.iloc[-1]["Close"]),
                         "rsi": float(df.iloc[-1].get("RSI", 0) or 0),
                     }
