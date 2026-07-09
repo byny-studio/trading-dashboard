@@ -16,6 +16,7 @@ app.py 사용법:
 """
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import FinanceDataReader as fdr
@@ -195,16 +196,31 @@ def render_screener(
             st.error("종목 리스트를 가져오지 못했습니다. 인터넷 연결 확인.")
             return
 
+        # 1) 데이터 병렬 로드 — 350종목을 순차로 받으면 5분+, 스레드로 대폭 단축
+        #    (load_stock_data는 내부에 st.* 호출이 없어 스레드에서 안전)
+        progress = st.progress(0.0, text=f"데이터 불러오는 중... 0/{total}")
+        data_map = {}
+        done = 0
+        with ThreadPoolExecutor(max_workers=12) as ex:
+            futs = {ex.submit(load_stock_data, s["code"]): s for s in universe}
+            for fut in as_completed(futs):
+                s = futs[fut]
+                try:
+                    data_map[s["code"]] = fut.result()
+                except Exception:
+                    data_map[s["code"]] = None
+                done += 1
+                progress.progress(done / total, text=f"데이터 불러오는 중... {done}/{total}")
+
+        # 2) 채점 (CPU 연산이라 빠름)
         results = []
-        progress = st.progress(0.0, text=f"분석 중... 0/{total}")
-        for i, stock in enumerate(universe):
+        for stock in universe:
+            df = data_map.get(stock["code"])
+            if df is None or df.empty or len(df) < 60:
+                continue
             try:
-                df = load_stock_data(stock["code"])
-                if df.empty or len(df) < 60:
-                    continue
                 df = add_indicators(df)
-                result = mode_fn(df)
-                sc = result.get("total", 0)   # 종목 점수 (total=유니버스 수와 이름 충돌 방지)
+                sc = mode_fn(df).get("total", 0)   # 종목 점수
                 if sc >= threshold:
                     rec = {
                         "code": stock["code"],
@@ -215,7 +231,7 @@ def render_screener(
                         "price": int(df.iloc[-1]["Close"]),
                         "rsi": float(df.iloc[-1].get("RSI", 0) or 0),
                     }
-                    # 반등 모드: 통과 종목만 재무 검증 (350개 전부 X → 빠름)
+                    # 반등 모드: 통과 종목만 재무 검증 (몇 개뿐 → 빠름)
                     if is_reversion and get_fundamentals is not None:
                         health = financial_health(get_fundamentals(stock["code"]))
                         rec["health"] = health
@@ -224,7 +240,6 @@ def render_screener(
                     results.append(rec)
             except Exception:
                 pass
-            progress.progress((i + 1) / total, text=f"분석 중... {i + 1}/{total}")
         progress.empty()
 
         results.sort(key=lambda x: -x["score"])
