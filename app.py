@@ -860,6 +860,7 @@ def portfolio_diagnosis(portfolio, market_bullish, horizon="short"):
     rows = []
     for it in holds:
         code = it["code"]
+        qty = it.get("quantity", 0) or 0
         df = dfmap.get(code)
         if df is None or df.empty:
             continue
