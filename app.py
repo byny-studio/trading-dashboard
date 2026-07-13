@@ -851,14 +851,17 @@ def portfolio_diagnosis(portfolio, market_bullish, horizon="short"):
     실제 보유 데이터(평가비중·시총·추세/반등·치트시트 테마)로 진단한다."""
     mcap = load_marcap()
     tmap = leader_theme_map()
+    holds = [it for it in portfolio if it.get("code") and (it.get("quantity", 0) or 0) > 0]
+    # 데이터 병렬 로드 — 순차면 FDR 느릴 때 종목수×시간(무한대기). 병렬이면 가장 느린 1개 시간.
+    from concurrent.futures import ThreadPoolExecutor
+    codes = [it["code"] for it in holds]
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        dfmap = dict(zip(codes, ex.map(load_stock_data, codes)))
     rows = []
-    for it in portfolio:
-        code = it.get("code", "")
-        qty = it.get("quantity", 0) or 0
-        if not code or qty <= 0:
-            continue
-        df = load_stock_data(code)
-        if df.empty:
+    for it in holds:
+        code = it["code"]
+        df = dfmap.get(code)
+        if df is None or df.empty:
             continue
         di = add_indicators(df)
         price = int(di.iloc[-1]["Close"])
