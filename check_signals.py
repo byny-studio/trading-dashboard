@@ -8,6 +8,7 @@ GitHub Actions(cron)에서 실행. 앱 로직(추세/반등/과열/시장필터)
   PORTFOLIO_JSON   : 보유종목 JSON 배열 문자열 (portfolio.json 내용)
 """
 import os
+import sys
 import json
 import warnings
 import urllib.parse
@@ -476,5 +477,71 @@ def main():
     print("Discord 발송:", resp.status_code)
 
 
+SEMI_KW = ("반도체", "HBM", "메모리", "파운드리", "시스템반도체", "AI", "온디바이스", "D램", "낸드")
+
+
+def us_theme_hints(us, rising):
+    """간밤 미국(특히 SOX) → 오늘 국내 테마 연관 힌트. SOX는 반도체·AI 테마의 시초가 편향 선행."""
+    hints = []
+    sox = us.get("sox", {}).get("chg")
+    nq = us.get("nasdaq", {}).get("chg")
+    # SOX(필라델피아 반도체) 방향 → 국내 반도체·AI 테마 시초가 편향
+    if sox is not None:
+        if sox <= -2:
+            hints.append(f"🔻 SOX(美 반도체) {sox:+.1f}% 급락 → **반도체·HBM·AI** 테마 시초가 약세 가능 (매수는 갭다운 확인 후 저가 노림)")
+        elif sox >= 2:
+            hints.append(f"🔺 SOX(美 반도체) {sox:+.1f}% 급등 → **반도체·HBM·AI** 테마 시초가 강세 가능 (추격은 과열 주의)")
+    elif nq is not None and abs(nq) >= 1.5:
+        arrow = "약세" if nq < 0 else "강세"
+        hints.append(f"나스닥 {nq:+.1f}% → 성장·기술주(반도체·2차전지) 시초가 {arrow} 편향")
+    # 어제 살아난 국내 테마 중 반도체·AI 계열이 있으면 SOX 방향과 엮어 강조
+    if sox is not None and rising:
+        semi_rising = [t for t in rising if any(k in t["name"] for k in SEMI_KW)]
+        for t in semi_rising[:2]:
+            tie = "미국 반도체 강세와 동반" if sox >= 0 else "단 간밤 美 반도체 약세는 부담"
+            hints.append(f"• 어제 살아난 **{t['name']}** ({t['chg']:+.1f}%) — {tie}")
+    return hints
+
+
+def send_morning():
+    """개장 전(08시경) 브리핑: 간밤 미국 → 오늘 시초가 편향 + 테마 연관. 정보 참고용(매매 개입 X)."""
+    import us_market
+    webhook = os.environ.get("DISCORD_WEBHOOK", "").strip()
+    if not webhook:
+        print("DISCORD_WEBHOOK 미설정 — 종료")
+        return
+    try:
+        us = us_market.get_us_overnight()
+    except Exception as e:
+        print("간밤 미국 조회 실패:", e)
+        return
+    if not us or us.get("nasdaq", {}).get("chg") is None:
+        print("미국 데이터 없음 — 종료")
+        return
+
+    lines = ["🌅 **개장 전 브리핑** (👉 오늘 시초가 매매 참고)"]
+    lines += us_market.overnight_lines(us)
+
+    try:
+        rising = early_momentum_themes(get_naver_themes())
+    except Exception:
+        rising = []
+    hints = us_theme_hints(us, rising)
+    if hints:
+        lines += ["", "🔗 **간밤 미국 → 오늘 테마 연관**"] + hints
+    if rising:
+        lines += ["", "🌱 **어제 살아난 테마** (오늘 관심)"]
+        lines += [f"• {t['name']} {t['chg']:+.1f}% (3일 {t['chg3']:+.1f}%) · 대장주: {', '.join(t['leads'][:3])}"
+                  for t in rising[:4]]
+    lines += ["", "_어제 마감 브리핑의 매수 후보를 위 시초가 편향 감안해 판단하세요. 미국 영향은 시초가 갭에 대부분 반영·장중은 무관._"]
+
+    msg = "\n".join(lines)[:1900]
+    resp = requests.post(webhook, json={"content": msg}, timeout=15)
+    print("Discord(아침) 발송:", resp.status_code)
+
+
 if __name__ == "__main__":
-    main()
+    if "--morning" in sys.argv:
+        send_morning()
+    else:
+        main()

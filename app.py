@@ -22,6 +22,7 @@ from plotly.subplots import make_subplots
 from stock_screener import render_screener
 from candle_analyzer import analyze_candle
 from theme_tracker import render_theme_tracker, leader_theme_map
+import us_market
 
 # ===== 페이지 설정 =====
 st.set_page_config(
@@ -2144,7 +2145,41 @@ st.sidebar.caption("완충대 ±2% · 기울기 20일 기준  ·  ⚡단기=데�
 st.sidebar.caption("⚠️ 본 도구는 참고용입니다. 모든 매매 결정의 책임은 본인에게 있습니다.")
 
 
+@st.cache_data(ttl=1800)
+def _us_overnight_cached():
+    return us_market.get_us_overnight()
+
+
+def render_us_overnight_banner():
+    """🌙 간밤 미국 → 오늘 시초가 편향 배너 (정보 참고용, 매매 개입 X)."""
+    try:
+        us = _us_overnight_cached()
+    except Exception:
+        return
+    if not us or us.get("nasdaq", {}).get("chg") is None:
+        return
+    gb = us.get("gap_bias")
+    box = st.error if (gb is not None and gb <= -1.0) else (
+        st.success if (gb is not None and gb >= 1.0) else st.info)
+    c = st.columns([1, 1, 1, 1, 2])
+    for col, key in zip(c[:4], ("sp", "nasdaq", "sox", "vix")):
+        m = us[key]
+        if key == "vix":
+            col.metric(m["label"], f"{m['value']:.0f}" if m["value"] else "—",
+                       f"{m['chg']:+.1f}%" if m["chg"] is not None else None)
+        else:
+            col.metric(m["label"], f"{m['chg']:+.1f}%" if m["chg"] is not None else "—")
+    with c[4]:
+        box(f"🌙 간밤 미국 ({us.get('date','')}) → {us_market.bias_text(us)}")
+        rt = us_market.risk_text(us)
+        if rt:
+            st.caption(rt)
+
+
 # ===== 메인 화면 =====
+with st.expander("🌙 간밤 미국증시 → 오늘 시초가 참고", expanded=True):
+    render_us_overnight_banner()
+    st.caption("미국 영향은 시초가 갭에 대부분 반영(상관 0.57)·장중은 무관(0.01). 매매는 참고만.")
 if mode == "🔍 단일 종목 분석":
     st.title("🔍 단일 종목 분석")
 
