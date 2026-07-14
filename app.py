@@ -347,6 +347,146 @@ def format_fundamentals_line(data: dict) -> str:
     return "  ·  ".join(parts) if parts else "펀더멘털 정보 없음"
 
 
+def _parse_signed(txt: str):
+    """'+2,313,745' / '-716,994' / '' → float 또는 None."""
+    if not txt:
+        return None
+    t = txt.replace(",", "").replace("+", "").strip()
+    if t in ("", "-", "N/A"):
+        return None
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+@st.cache_data(ttl=86400)
+def get_financials(code: str) -> dict:
+    """네이버 기업실적분석 표에서 연간 재무(매출/영업이익/순이익/이익률/ROE/부채비율) 스크레이핑."""
+    if not code:
+        return {}
+    try:
+        url = f"https://finance.naver.com/item/main.naver?code={code}"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+        if r.status_code != 200:
+            return {}
+        r.encoding = "utf-8"
+        soup = BeautifulSoup(r.text, "html.parser")
+        tbl = soup.select_one("div.section.cop_analysis table")
+        if not tbl:
+            return {}
+        heads = tbl.select("thead tr")
+        if len(heads) < 2:
+            return {}
+        periods = [th.get_text(strip=True) for th in heads[1].select("th")]
+        # 연간 실적 컬럼 수 = '최근 연간 실적' th의 colspan
+        annual_n = 4
+        for th in heads[0].select("th"):
+            if "연간" in th.get_text():
+                annual_n = int(th.get("colspan", 4))
+                break
+        wanted = {
+            "매출액": "매출액", "영업이익": "영업이익", "당기순이익": "당기순이익",
+            "영업이익률": "영업이익률", "ROE(지배주주)": "ROE", "부채비율": "부채비율",
+        }
+        out = {"periods": periods[:annual_n]}
+        for tr in tbl.select("tbody tr"):
+            th = tr.select_one("th")
+            if not th:
+                continue
+            label = th.get_text(strip=True)
+            if label in wanted:
+                vals = [_parse_signed(td.get_text(strip=True)) for td in tr.select("td")]
+                out[wanted[label]] = vals[:annual_n]
+        return out
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=1800)
+def get_supply_demand(code: str, days: int = 20) -> dict:
+    """네이버 외국인/기관 순매매(주식수) 최근 days일 스크레이핑 + 5/20일 누적."""
+    if not code:
+        return {}
+    try:
+        url = f"https://finance.naver.com/item/frgn.naver?code={code}"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+        if r.status_code != 200:
+            return {}
+        r.encoding = "euc-kr"
+        soup = BeautifulSoup(r.text, "html.parser")
+        rows = []
+        for tr in soup.select("table.type2 tr"):
+            tds = [td.get_text(strip=True) for td in tr.select("td")]
+            if len(tds) >= 9 and tds[0] and "." in tds[0]:
+                rows.append({
+                    "date": tds[0], "close": _parse_signed(tds[1]),
+                    "inst": _parse_signed(tds[5]), "frgn": _parse_signed(tds[6]),
+                    "frgn_ratio": tds[8],
+                })
+        rows = rows[:days]
+        if not rows:
+            return {}
+
+        def _sum(key, n):
+            return sum((row[key] or 0) for row in rows[:n])
+        return {
+            "rows": rows,
+            "inst_5": _sum("inst", 5), "frgn_5": _sum("frgn", 5),
+            "inst_20": _sum("inst", len(rows)), "frgn_20": _sum("frgn", len(rows)),
+            "n": len(rows),
+        }
+    except Exception:
+        return {}
+
+
+def analyze_financials(fin: dict) -> str:
+    """재무 표 → 기업분석 한 줄 요약(성장성·수익성·안정성·흑자여부)."""
+    if not fin or not fin.get("매출액"):
+        return ""
+    def _actual(key):
+        """(E) 추정 제외한 실제 연간값 리스트."""
+        periods, vals = fin.get("periods", []), fin.get(key, [])
+        return [v for p, v in zip(periods, vals) if v is not None and "(E)" not in p]
+    parts = []
+    sales = _actual("매출액")
+    if len(sales) >= 2:
+        g = (sales[-1] - sales[-2]) / abs(sales[-2]) * 100 if sales[-2] else 0
+        if len(sales) >= 3 and sales[-1] > sales[-2] > sales[-3]:
+            parts.append(f"📈 매출 꾸준히 성장(최근 +{g:.0f}%)")
+        elif g > 5:
+            parts.append(f"📈 매출 성장(+{g:.0f}%)")
+        elif g < -5:
+            parts.append(f"📉 매출 감소({g:.0f}%)")
+        else:
+            parts.append("➡️ 매출 정체")
+    profit = _actual("당기순이익")
+    if profit:
+        if profit[-1] is not None and profit[-1] < 0:
+            parts.append("🔴 최근 순이익 적자")
+        elif len(profit) >= 2 and profit[-2] is not None and profit[-2] < 0 <= profit[-1]:
+            parts.append("🟢 흑자 전환")
+    opm = _actual("영업이익률")
+    if opm:
+        v = opm[-1]
+        if v is not None:
+            if v >= 15:
+                parts.append(f"💰 고수익(영업이익률 {v:.0f}%)")
+            elif v < 0:
+                parts.append("⚠️ 영업적자")
+    roe = _actual("ROE")
+    if roe and roe[-1] is not None and roe[-1] >= 10:
+        parts.append(f"⭐ ROE {roe[-1]:.0f}%(자본효율 우수)")
+    debt = _actual("부채비율")
+    if debt and debt[-1] is not None:
+        v = debt[-1]
+        if v >= 200:
+            parts.append(f"⚠️ 부채비율 {v:.0f}%(높음)")
+        elif v <= 100:
+            parts.append(f"🛡️ 부채비율 {v:.0f}%(안정)")
+    return "  ·  ".join(parts)
+
+
 # ===== 기술적 지표 계산 =====
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """이평선, RSI, 볼린저밴드, 거래량 이평 추가."""
@@ -1760,6 +1900,64 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
                 )
     else:
         st.caption("📰 최근 뉴스를 가져오지 못했습니다.")
+
+    # ===== 재무 · 손익 구조 + 기업 분석 =====
+    fin = get_financials(code)
+    if fin and fin.get("매출액"):
+        st.markdown("### 🏦 재무 · 손익 구조")
+        summary = analyze_financials(fin)
+        if summary:
+            st.info(f"🔍 **기업 분석:** {summary}")
+        periods = fin.get("periods", [])
+        def _fmt(v, pct=False):
+            if v is None:
+                return "—"
+            return f"{v:.1f}%" if pct else f"{v:,.0f}"
+        header = "| 지표 | " + " | ".join(periods) + " |"
+        divider = "|---|" + "---|" * len(periods)
+        lines = [header, divider]
+        for label, key, pct in [
+            ("매출액(억)", "매출액", False), ("영업이익(억)", "영업이익", False),
+            ("당기순이익(억)", "당기순이익", False), ("영업이익률", "영업이익률", True),
+            ("ROE", "ROE", True), ("부채비율", "부채비율", True),
+        ]:
+            vals = fin.get(key, [])
+            if not vals:
+                continue
+            cells = " | ".join(_fmt(v, pct) for v in vals)
+            lines.append(f"| **{label}** | {cells} |")
+        st.markdown("\n".join(lines))
+        st.caption("단위: 매출·이익=억원 · (E)=증권사 추정치 · 출처: 네이버 금융 기업실적분석")
+
+    # ===== 수급 (외국인 · 기관 순매매) =====
+    sd = get_supply_demand(code)
+    if sd and sd.get("rows"):
+        st.markdown("### 💰 수급 (외국인 · 기관)")
+        f5, i5 = sd["frgn_5"], sd["inst_5"]
+        # 5일 누적 방향으로 판단
+        if f5 > 0 and i5 > 0:
+            judge = "🟢 외국인·기관 **동반 순매수** — 강한 매집 신호"
+        elif f5 < 0 and i5 < 0:
+            judge = "🔴 외국인·기관 **동반 순매도** — 수급 이탈"
+        elif f5 > 0:
+            judge = "🟡 외국인 순매수 · 기관 순매도 — 외국인 주도"
+        elif i5 > 0:
+            judge = "🟡 기관 순매수 · 외국인 순매도 — 기관 주도"
+        else:
+            judge = "⚪ 뚜렷한 수급 방향 없음"
+        st.info(f"{judge}")
+        cs1, cs2 = st.columns(2)
+        cs1.metric("외국인 5일 누적", f"{f5:+,.0f}주", f"20일 {sd['frgn_20']:+,.0f}")
+        cs2.metric("기관 5일 누적", f"{i5:+,.0f}주", f"20일 {sd['inst_20']:+,.0f}")
+        with st.expander(f"📋 일별 순매매 {sd['n']}일 펼쳐보기"):
+            dl = ["| 날짜 | 종가 | 기관 | 외국인 | 외국인보유율 |", "|---|---|---|---|---|"]
+            for row in sd["rows"]:
+                dl.append(
+                    f"| {row['date']} | {row['close']:,.0f} | "
+                    f"{(row['inst'] or 0):+,.0f} | {(row['frgn'] or 0):+,.0f} | {row['frgn_ratio']} |"
+                )
+            st.markdown("\n".join(dl))
+        st.caption("단위: 주 · (+)순매수 / (−)순매도 · 출처: 네이버 금융")
 
     if tr["total"] >= 55 or rv["total"] >= 55:
         st.markdown("### 💵 매수 가격대 제안")
