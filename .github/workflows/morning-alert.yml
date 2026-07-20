@@ -1,10 +1,13 @@
 name: 개장 전 브리핑 (Discord · 간밤 미국)
 
 on:
+  # ⭐ 정시 트리거: 외부 스케줄러(cron-job.org)가 아래 event_type으로 호출.
+  #    GitHub schedule은 2~9시간 지연 상시라 개장 전 도착 불가 → 외부 스케줄러로 이전.
+  repository_dispatch:
+    types: [morning-brief]
+  # schedule은 백업(지연되더라도 발송 보장). cron-job.org 안정화 확인 후 제거 예정.
   schedule:
-    # 한국시간 월~금 08:13 (미국장 마감 05~06시 후 · 국내 개장 09시 전)
-    # = 전날 23:13 UTC. KST 월~금 아침 = UTC 일~목. 비혼잡 분(:13) 사용.
-    # 간밤 미국 → 오늘 시초가 편향 + 테마 연관 (정보 참고용, 매매 개입 X)
+    # 한국시간 월~금 08:13 (= 전날 23:13 UTC, KST 월~금 = UTC 일~목)
     - cron: "13 23 * * 0-4"
   workflow_dispatch: {}   # 수동 실행 버튼
 
