@@ -600,6 +600,36 @@ def render_theme_tracker(get_market_news=None, load_stock_data=None, add_indicat
         else:
             st.caption("조건(3일 상승 + 오늘 가속 + 4% 미만 + 거래량 1.2배↑)에 맞는 테마가 지금은 없습니다.")
 
+        # 🔍 주도주 바로보기 — 강세 Top10 + 막 살아나는 테마의 주도주를 클릭 버튼으로 (표는 정보용 유지)
+        if show_detail:
+            lead_names = []
+            for t in (early or []):                 # 선점 후보(막 살아나는) 우선 노출
+                lead_names += t.get("leads", [])
+            for t in themes_sorted[:10]:            # 강세 Top10 주도주
+                lead_names += t.get("leads", [])
+            seen = set()
+            uniq = [x for x in lead_names if x and not (x in seen or seen.add(x))][:24]
+            if uniq:
+                st.markdown("#### 🔍 주도주 바로보기 (클릭 → 상세)")
+                st.caption("막 살아나는 테마 + 강세 Top10의 주도주 · 중복 제거 · 최대 24개")
+                lcols = st.columns(6)
+                for i2, nm in enumerate(uniq):
+                    with lcols[i2 % 6]:
+                        sel = st.session_state.get("lead_stock_sel") == nm
+                        if st.button(nm, key=f"lead_{i2}", use_container_width=True,
+                                     type="primary" if sel else "secondary"):
+                            st.session_state["lead_stock_sel"] = None if sel else nm
+                            st.rerun()
+                _lsel = st.session_state.get("lead_stock_sel")
+                if _lsel in uniq:
+                    with st.container(border=True):
+                        hc = st.columns([6, 1])
+                        hc[0].markdown(f"#### 📊 {_lsel} 상세 분석")
+                        if hc[1].button("✕ 닫기", key="lead_close", use_container_width=True):
+                            st.session_state["lead_stock_sel"] = None
+                            st.rerun()
+                        show_detail(_lsel)
+
         # 테마 클릭 → 구성종목 (대장주 + 추세순 카드 + 그룹 리스트)
         st.markdown("#### 🔎 테마 구성종목 분석")
         name_to_no = {f"{t['name']} ({t['chg']:+.2f}%)": t["no"] for t in themes_sorted}
