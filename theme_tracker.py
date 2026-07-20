@@ -632,16 +632,27 @@ def render_theme_tracker(get_market_news=None, load_stock_data=None, add_indicat
                         f"(시총 1위 · {leader['price']}원 · {leader['chg']} · 추세 {leader['trend']})"
                     )
 
-                # 추세 강한 순 카드 4개 (과열도 거르지 않고 라벨로 표시)
+                def _theme_stock_btn(s, key):
+                    """종목명 버튼 → 클릭 시 상세 아코디언용 선택 저장. show_detail 없으면 텍스트."""
+                    crown = "👑 " if s.get("is_leader") else ""
+                    if show_detail:
+                        sel = st.session_state.get("theme_stock_sel") == s["name"]
+                        if st.button(f"{crown}{s['name']}", key=key, use_container_width=True,
+                                     type="primary" if sel else "secondary"):
+                            st.session_state["theme_stock_sel"] = None if sel else s["name"]
+                            st.rerun()
+                    else:
+                        st.markdown(f"**{crown}{s['name']}**")
+
+                # 추세 강한 순 카드 4개 (종목명 클릭 → 상세)
                 by_trend = sorted(ranked, key=lambda x: x["trend"], reverse=True)
                 cards = by_trend[:4]
-                st.markdown("**📈 추세 강한 종목 Top 4** (라벨로 진입 타이밍 구분)")
+                st.markdown("**📈 추세 강한 종목 Top 4** (종목명 클릭 → 상세 분석)")
                 ccols = st.columns(4)
-                for col, s in zip(ccols, cards):
+                for ci2, (col, s) in enumerate(zip(ccols, cards)):
                     with col:
                         with st.container(border=True):
-                            crown = "👑 " if s.get("is_leader") else ""
-                            st.markdown(f"**{crown}{s['name']}**")
+                            _theme_stock_btn(s, key=f"thc_{ci2}")
                             st.markdown(
                                 f"<div style='font-size:13px;line-height:1.7'>"
                                 f"{s['price']}원 · {s['chg']}<br>"
@@ -650,10 +661,10 @@ def render_theme_tracker(get_market_news=None, load_stock_data=None, add_indicat
                                 unsafe_allow_html=True,
                             )
 
-                # 나머지 → 타이밍 라벨별 그룹 리스트
+                # 나머지 → 타이밍 라벨별 그룹 리스트 (클릭 가능)
                 rest = by_trend[4:]
                 if rest:
-                    st.markdown("**📋 나머지 종목 (진입 타이밍별)**")
+                    st.markdown("**📋 나머지 종목 (진입 타이밍별 · 클릭 → 상세)**")
                     order = ["⚡ 강세(추세 양호)", "🌱 추세 초입", "🔄 반등 시도",
                              "🔥 과열(늦음주의)", "⏸️ 관망", "데이터 없음"]
                     by_tag = {}
@@ -664,13 +675,25 @@ def render_theme_tracker(get_market_news=None, load_stock_data=None, add_indicat
                         if not items:
                             continue
                         st.markdown(f"**{tag}**")
-                        for s in items:
-                            crown = "👑 " if s.get("is_leader") else ""
-                            st.markdown(
-                                f"- {crown}**{s['name']}** · {s['chg']} · 📈{s['trend']} 🔄{s['rev']}"
-                            )
+                        lcols = st.columns(3)
+                        for li2, s in enumerate(items):
+                            with lcols[li2 % 3]:
+                                _theme_stock_btn(s, key=f"thl_{tag}_{s['name']}")
+
+                # 선택 종목 상세 아코디언 (구성종목 블록 맨 아래)
+                _sel = st.session_state.get("theme_stock_sel")
+                _all = {s["name"] for s in ranked}
+                if _sel in _all and show_detail:
+                    with st.container(border=True):
+                        hc = st.columns([6, 1])
+                        hc[0].markdown(f"#### 📊 {_sel} 상세 분석")
+                        if hc[1].button("✕ 닫기", key="theme_close", use_container_width=True):
+                            st.session_state["theme_stock_sel"] = None
+                            st.rerun()
+                        show_detail(_sel)
+
                 st.caption("⚡강세=추세 좋음 · 🌱초입=진입 적기 · 🔥과열=이미 급등(늦음주의) · "
-                           "시총 상위 15개 분석 · 👉 종목명으로 '🔍 단일 종목 분석'에서 상세 확인")
+                           "시총 상위 15개 분석 · 👉 종목명 클릭 시 바로 아래 상세(차트·재무·수급·뉴스)")
 
     st.markdown("---")
 
