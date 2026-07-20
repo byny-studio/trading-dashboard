@@ -353,6 +353,8 @@ def financial_health(fund):
 MKT_BAND = 0.02       # 완충대: 200일선 ±2% 안이면 '중립'(휩쏘 방지) — app.py와 동일
 MKT_SLOPE_LB = 20     # 200일선 기울기 판단 기간(거래일)
 MKT_SLOPE_TH = 0.003  # 기울기 임계: 20일간 200선 변화 ±0.3%
+MKT_CRASH_DD = -12    # 급락 경보: 최근 고점(60일) 대비 낙폭 이하면 크래시 — app.py와 동일
+MKT_CRASH_MOM = -10   # 급락 경보: 20일 수익률 이하면 크래시
 
 
 def market_bullish():
@@ -381,8 +383,14 @@ def market_regime():
             regime = "하락"
         else:
             regime = "중립"
+        # ⚠️ 급락 오버라이드(app.py와 동일): 200선 후행이라 폭락 놓침 → 고점낙폭·20일모멘텀
+        recent_peak = float(df["Close"].iloc[-60:].max()) if len(df) >= 60 else cur
+        dd_from_peak = (cur - recent_peak) / recent_peak * 100 if recent_peak else 0
+        mom20 = (cur - float(df["Close"].iloc[-21])) / float(df["Close"].iloc[-21]) * 100 if len(df) > 21 else 0
+        crash = dd_from_peak <= MKT_CRASH_DD or mom20 <= MKT_CRASH_MOM
         return {"bullish": cur >= ma200, "regime": regime, "slope": slope,
-                "gap_pct": gap * 100, "slope_pct": slope_pct * 100}
+                "gap_pct": gap * 100, "slope_pct": slope_pct * 100,
+                "crash": crash, "dd_from_peak": dd_from_peak, "mom20": mom20}
     except Exception:
         return base
 
@@ -451,11 +459,17 @@ def main():
 
     _rico = {"상승": "📈", "하락": "📉", "중립": "🔄"}.get(reg["regime"], "📊")
     _slope_txt = {"up": "200선↑", "flat": "200선→", "down": "200선↓"}.get(reg["slope"], "")
-    lines = [f"📊 **마감 브리핑** ({ref_date} 종가 기준 · 👉 내일 시초가 매매 참고)",
-             f"시장 국면: {_rico} **{reg['regime']}** "
-             f"(지수 {reg['gap_pct']:+.1f}% vs 200선 · {_slope_txt})"
-             + ("" if bull else " · 추세매수 보류"),
-             f"적용 관점: {hz_label}  _(국면 따라 자동)_"]
+    lines = [f"📊 **마감 브리핑** ({ref_date} 종가 기준 · 👉 내일 시초가 매매 참고)"]
+    # 💥 급락 경보 최우선(200선 후행이라 폭락 중에도 '상승'으로 뜸)
+    if reg.get("crash"):
+        lines.append(
+            f"💥 **급락 경보** — 코스피 최근 고점 대비 {reg.get('dd_from_peak',0):+.1f}% · "
+            f"20일 {reg.get('mom20',0):+.1f}% 폭락 중 (200선 표면 국면 '{reg['regime']}'이나 후행). "
+            f"→ 떨어지는 칼날 주의·신규매수 분할/관망")
+    lines += [f"시장 국면: {_rico} **{reg['regime']}** "
+              f"(지수 {reg['gap_pct']:+.1f}% vs 200선 · {_slope_txt})"
+              + ("" if bull else " · 추세매수 보류"),
+              f"적용 관점: {hz_label}  _(국면 따라 자동)_"]
     if news_themes:
         lines += ["", "📰 **오늘 뜨는 이슈 테마** (2일 뉴스)"]
         lines += [f"• {t['theme']} `{t['count']}건` — {t['sectors']} · 대장주: {', '.join(t['leaders'][:3])}"

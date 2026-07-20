@@ -244,6 +244,8 @@ def get_market_uptrend_series() -> pd.Series:
 MKT_BAND = 0.02       # 완충대: 200일선 ±2% 안이면 '중립'(휩쏘 방지)
 MKT_SLOPE_LB = 20     # 200일선 기울기 판단 기간(거래일)
 MKT_SLOPE_TH = 0.003  # 기울기 임계: 20일간 200선 변화 ±0.3%
+MKT_CRASH_DD = -12    # 급락 경보: 최근 고점(60일) 대비 낙폭 이하면 크래시(200선 위여도)
+MKT_CRASH_MOM = -10   # 급락 경보: 20일 수익률 이하면 크래시
 
 
 @st.cache_data(ttl=3600)
@@ -273,9 +275,15 @@ def get_market_regime() -> dict:
             regime = "하락"
         else:
             regime = "중립"
+        # ⚠️ 급락 오버라이드: 200선은 후행이라 단기 폭락을 놓침 → 최근 고점 낙폭·20일 모멘텀으로 감지
+        recent_peak = float(df["Close"].iloc[-60:].max()) if len(df) >= 60 else cur
+        dd_from_peak = (cur - recent_peak) / recent_peak * 100 if recent_peak else 0
+        mom20 = (cur - float(df["Close"].iloc[-21])) / float(df["Close"].iloc[-21]) * 100 if len(df) > 21 else 0
+        crash = dd_from_peak <= MKT_CRASH_DD or mom20 <= MKT_CRASH_MOM
         return {"ok": True, "bullish": cur >= ma200, "regime": regime, "slope": slope,
                 "band": band, "index": cur, "ma200": ma200,
-                "gap_pct": gap * 100, "slope_pct": slope_pct * 100}
+                "gap_pct": gap * 100, "slope_pct": slope_pct * 100,
+                "crash": crash, "dd_from_peak": dd_from_peak, "mom20": mom20}
     except Exception:
         return {"ok": True, "bullish": bool(up.iloc[-1]), "regime": "중립",
                 "slope": "flat", "band": "within"}
@@ -2133,7 +2141,15 @@ if _reg.get("ok"):
     # 국면 상세: 지수-200선 이격 + 200선 기울기 (완충대 ±2%)
     _gap, _sl = _reg.get("gap_pct", 0), _reg.get("slope_pct", 0)
     _detail = f"지수 {_gap:+.1f}% (200선 대비) · {_slope_txt} ({_sl:+.1f}%/20일)"
-    if _regime == "상승":
+    # ⚠️ 급락 경보 최우선: 200선은 후행이라 폭락 중에도 '상승'으로 뜸 → 급락 감지 시 오버라이드 표시
+    if _reg.get("crash"):
+        _ddp, _m20 = _reg.get("dd_from_peak", 0), _reg.get("mom20", 0)
+        st.sidebar.error(
+            f"💥 **급락 경보** (200선은 아직 위지만 단기 폭락 중)\n\n"
+            f"최근 고점 대비 **{_ddp:+.1f}%** · 20일 **{_m20:+.1f}%**\n\n"
+            f"→ 떨어지는 칼날 주의 · 신규매수는 분할·관망")
+        st.sidebar.caption(f"(200선 기준 표면 국면: {_regime} · {_detail})")
+    elif _regime == "상승":
         st.sidebar.success(f"📈 시장 국면: **상승**\n\n{_detail}")
     elif _regime == "하락":
         st.sidebar.error(f"📉 시장 국면: **하락**\n\n{_detail}")
@@ -2177,6 +2193,13 @@ def render_us_overnight_banner():
 
 
 # ===== 메인 화면 =====
+# 💥 급락 경보: 200선 국면판정이 놓치는 단기 폭락을 메인 상단에 크게 표시
+if _reg.get("crash"):
+    st.error(
+        f"💥 **급락 경보** — 코스피 최근 고점 대비 **{_reg.get('dd_from_peak',0):+.1f}%** · "
+        f"20일 **{_reg.get('mom20',0):+.1f}%** 폭락 중 "
+        f"(200일선은 아직 위라 표면 국면은 '{_regime}'이지만 후행 지표라 급락을 못 잡음)  \n"
+        f"→ 떨어지는 칼날 주의. 신규매수는 **분할·관망**. 역대 통계상 급락 깊을수록 이후 회복폭↑이나 **길게(3~6개월) 봐야**.")
 with st.expander("🌙 간밤 미국증시 → 오늘 시초가 참고", expanded=True):
     render_us_overnight_banner()
     st.caption("미국 영향은 시초가 갭에 대부분 반영(상관 0.57)·장중은 무관(0.01). 매매는 참고만.")
