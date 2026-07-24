@@ -1561,6 +1561,16 @@ def _summarize_articles(articles: list) -> str:
 
 
 @st.cache_data(ttl=1800)
+def get_broker_reports_cached(code: str, limit: int = 6) -> list:
+    """증권사 리서치 리포트(네이버 금융 리서치) — 공신력 있는 애널리스트 리포트."""
+    try:
+        from broker_report import broker_reports
+        return broker_reports(code, limit)
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=1800)
 def get_news_summaries(query: str, limit: int = 4) -> dict:
     """네이버 뉴스 검색 → 상위 기사 본문 추출 → 알고리즘 요약 (30분 캐시).
     반환: {"summary": "...", "articles": [{"title", "url", "source"}, ...]}"""
@@ -1892,6 +1902,17 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
             f"<div style='color:#A1A1AA;font-size:13px;margin-left:14px;margin-top:-6px'>🧭 풀이 — {glossary_line}</div>",
             unsafe_allow_html=True,
         )
+
+    # 증권사 리포트 (공신력 있는 애널리스트 리포트 — 일반 뉴스보다 우선)
+    reports = get_broker_reports_cached(code, 6)
+    if reports:
+        st.markdown("### 📑 증권사 리포트")
+        for rp in reports:
+            st.markdown(
+                f"- **[{rp['증권사']}]** {rp['제목']}"
+                + (f" <span style='color:#A1A1AA;font-size:12px'>· {rp['날짜']}</span>" if rp.get('날짜') else ""),
+                unsafe_allow_html=True,
+            )
 
     # 종목 관련 최근 뉴스 (상위 4건 본문 추출 + 알고리즘 요약)
     query = name if name and name != code else code
