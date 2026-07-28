@@ -34,6 +34,16 @@ MAX_SCORE = 100
 
 # ===== 워치리스트 (관심종목) =====
 def load_watchlist() -> list:
+    # 클라우드: Secrets(watchlist_json) 우선 — 개인데이터는 gitignore라 클라우드엔 Secrets로만 전달
+    try:
+        raw = st.secrets["watchlist_json"]
+    except Exception:
+        raw = None
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
     if os.path.exists(WATCHLIST_FILE):
         try:
             with open(WATCHLIST_FILE, "r", encoding="utf-8") as f:

@@ -2087,6 +2087,16 @@ def save_portfolio(items: list) -> None:
 
 # ===== 분석 기록 저장/로드 =====
 def load_history() -> list:
+    # 클라우드: Secrets(history_json) 우선 — 개인데이터는 gitignore라 클라우드엔 Secrets로만 전달
+    try:
+        raw = st.secrets["history_json"]
+    except Exception:
+        raw = None
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:

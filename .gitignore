@@ -16,3 +16,7 @@ _archive/
 __pycache__/
 *.pyc
 .DS_Store
+
+# 클라우드 Secrets 붙여넣기용(개인데이터 — 절대 커밋 금지)
+_cloud_secrets.txt
+cloud_sync.py
