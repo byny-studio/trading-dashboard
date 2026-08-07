@@ -371,13 +371,21 @@ def render_screener(
     watchlist = load_watchlist()
     watchlist_codes = {w["code"] for w in watchlist}
 
+    sim_qty = 10
+    if add_to_sim:
+        sim_qty = int(st.number_input(
+            "🧪 모의매수 기본 수량(주)", min_value=1, value=10, step=1, key="screen_sim_qty",
+            help="발굴 결과의 '🧪' 버튼을 누르면 현재가로 이 수량만큼 모의매수에 담깁니다. "
+                 "🧪 모의매수 메뉴에서 지수(KODEX200) 대비 성과를 추적하세요."))
+
     # 강력 매수 섹션 (종목 클릭 시 그 행 아래에 상세 아코디언)
     if strong:
         st.markdown(f"### 🚀 강력 매수 ({len(strong)}개)")
         _render_result_table(strong, watchlist, watchlist_codes, save_watchlist, prefix="s",
                              load_stock_data=load_stock_data, add_indicators=add_indicators,
                              score_signal=score_signal, calc_stop_levels=calc_stop_levels,
-                             make_chart=make_chart, show_detail=show_detail)
+                             make_chart=make_chart, show_detail=show_detail,
+                             add_to_sim=add_to_sim, sim_qty=sim_qty)
 
     # 매수 관심 섹션
     if interest:
@@ -387,7 +395,8 @@ def render_screener(
         _render_result_table(interest, watchlist, watchlist_codes, save_watchlist, prefix="i",
                              load_stock_data=load_stock_data, add_indicators=add_indicators,
                              score_signal=score_signal, calc_stop_levels=calc_stop_levels,
-                             make_chart=make_chart, show_detail=show_detail)
+                             make_chart=make_chart, show_detail=show_detail,
+                             add_to_sim=add_to_sim, sim_qty=sim_qty)
 
     # 워치리스트 표시
     st.markdown("---")
@@ -760,10 +769,12 @@ def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note,
 
 def _render_result_table(results, watchlist, watchlist_codes, save_fn, prefix="",
                          load_stock_data=None, add_indicators=None, score_signal=None,
-                         calc_stop_levels=None, make_chart=None, show_detail=None):
-    """발굴 결과 테이블. 종목명 클릭 시 그 행 바로 아래에 상세를 아코디언처럼 펼침."""
+                         calc_stop_levels=None, make_chart=None, show_detail=None,
+                         add_to_sim=None, sim_qty=10):
+    """발굴 결과 테이블. 종목명 클릭 시 그 행 바로 아래에 상세를 아코디언처럼 펼침.
+    add_to_sim: 있으면 '🧪' 모의매수 버튼 열 추가(현재가로 sim_qty주 담기)."""
     # 헤더
-    COL_RATIOS = [3, 3, 1.5, 2, 1.2, 1.5]
+    COL_RATIOS = [3, 3, 1.5, 2, 1.2, 1.5, 1.2] if add_to_sim else [3, 3, 1.5, 2, 1.2, 1.5]
     h = st.columns(COL_RATIOS)
     h[0].caption("종목")
     h[1].caption("매매 신호")
@@ -771,6 +782,8 @@ def _render_result_table(results, watchlist, watchlist_codes, save_fn, prefix=""
     h[3].caption("현재가")
     h[4].caption("RSI")
     h[5].caption("관심종목")
+    if add_to_sim:
+        h[6].caption("모의매수")
 
     for i, r in enumerate(results):
         cols = st.columns(COL_RATIOS)
@@ -811,6 +824,17 @@ def _render_result_table(results, watchlist, watchlist_codes, save_fn, prefix=""
                 })
                 save_fn(watchlist)
                 st.rerun()
+
+        # 🧪 모의매수 바로 담기 (현재가로 sim_qty주) — 콜백은 app.py 소유(sim_portfolio.json)
+        if add_to_sim:
+            if cols[6].button("🧪", key=f"sim_{prefix}_{i}",
+                              help=f"현재가로 {sim_qty}주 모의매수 담기(🧪 모의매수 메뉴에서 추적)"):
+                ok = add_to_sim(r["code"], r["name"], sim_qty, r.get("price", 0),
+                                f"발굴 {r['score']}점")
+                if ok:
+                    st.success(f"🧪 {r['name']} {sim_qty}주 모의매수 담음 (🧪 모의매수 메뉴에서 확인)")
+                else:
+                    st.error("현재가를 가져오지 못해 담지 못했습니다.")
 
         # 클릭된 행 바로 아래에 상세 분석 펼치기 (아코디언)
         if is_sel and load_stock_data:
