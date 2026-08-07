@@ -552,9 +552,13 @@ def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal
         def cb(phase, done, total):
             frac = done / max(total, 1)
             if phase == "prefilter":
-                pbar.progress(min(frac * 0.4, 0.4), text=f"시세 프리필터 {done}/{total}")
-            else:
-                pbar.progress(0.4 + min(frac * 0.6, 0.6), text=f"키움 수급 확인 {done}/{total}")
+                pbar.progress(min(frac * 0.35, 0.35), text=f"시세 프리필터 {done}/{total}")
+            elif phase == "cntr":
+                pbar.progress(0.9 + min(frac * 0.1, 0.1),
+                              text=f"체결강도(매수세) 확인 {done}/{total}")
+            else:  # supply
+                pbar.progress(0.35 + min(frac * 0.55, 0.55),
+                              text=f"키움 수급 확인 {done}/{total}")
 
         try:
             api._ensure_token()
