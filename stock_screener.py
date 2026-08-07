@@ -168,8 +168,10 @@ def render_screener(
     get_fundamentals=None,
     show_detail=None,
     market_regime=None,
+    add_to_sim=None,
 ):
-    """종목 발굴 화면. show_detail: 종목 클릭 시 풀 상세를 렌더할 콜백(code,name) — 없으면 축약."""
+    """종목 발굴 화면. show_detail: 종목 클릭 시 풀 상세를 렌더할 콜백(code,name) — 없으면 축약.
+    add_to_sim: 매집 카드에서 모의매수로 바로 담는 콜백(app.py sim_portfolio)."""
     st.title("🔭 종목 발굴")
     if market_regime:
         _render_regime_reco(market_regime)
@@ -214,7 +216,7 @@ def render_screener(
         _render_accumulation(
             load_stock_data=load_stock_data, add_indicators=add_indicators,
             score_signal=score_signal, calc_stop_levels=calc_stop_levels,
-            make_chart=make_chart,
+            make_chart=make_chart, add_to_sim=add_to_sim,
         )
         # 매집에서 담은 관심종목을 이 화면 하단에도 바로 표시 (목록은 저장정보만 → 가벼움)
         st.markdown("---")
@@ -508,8 +510,9 @@ def _render_surge_monitor():
 
 
 def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal=None,
-                         calc_stop_levels=None, make_chart=None):
-    """키움 투자자별 수급으로 사모·기관 '조용한 매집' 종목 발굴 (대형/중형 강도순). 참고용."""
+                         calc_stop_levels=None, make_chart=None, add_to_sim=None):
+    """키움 투자자별 수급으로 사모·기관 '조용한 매집' 종목 발굴 (대형/중형 강도순). 참고용.
+    add_to_sim: 있으면 카드에 '🧪 모의매수' 버튼 노출(app.py sim_portfolio 콜백)."""
     st.caption(
         "키움 투자자별 수급(ka10059)으로 **'조용한 매집'**(사모·기관 지속 순매수 + 개미 이탈) 종목을 "
         "대형/중형으로 나눠 **매집 강도순**으로 뽑습니다. "
@@ -601,11 +604,19 @@ def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal
         )
     watchlist = load_watchlist()
     watchlist_codes = {w["code"] for w in watchlist}
+    sim_qty = 10
+    if add_to_sim:
+        sim_qty = int(st.number_input(
+            "🧪 모의매수 기본 수량(주)", min_value=1, value=10, step=1, key="accum_sim_qty",
+            help="카드의 '🧪 모의매수' 버튼을 누르면 오늘 종가로 이 수량만큼 담깁니다. "
+                 "🧪 모의매수 메뉴에서 지수(KODEX200) 대비 성과를 추적하세요."))
     _render_accum_section("🏛️ 대형주 매집", large, watchlist, watchlist_codes, "L",
-                          "광범위 기관매집(사모+금융투자+투신+기관) 유효 · 검증 사모 +5.4%p")
+                          "광범위 기관매집(사모+금융투자+투신+기관) 유효 · 검증 사모 +5.4%p",
+                          add_to_sim=add_to_sim, sim_qty=sim_qty)
     st.markdown("")
     _render_accum_section("🏗️ 중형주 매집", mid, watchlist, watchlist_codes, "M",
-                          "사모 주력(+4.3%p) · 외국인 지속매수는 역신호라 제외")
+                          "사모 주력(+4.3%p) · 외국인 지속매수는 역신호라 제외",
+                          add_to_sim=add_to_sim, sim_qty=sim_qty)
 
 
 def _accum_stage(days):
@@ -689,8 +700,10 @@ def _accum_cntr_str(f) -> str:
     return f"⚪ 체결강도 {cs:.0f} (매수세 약함 · 매집 식는 중일 수 있음)"
 
 
-def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note):
-    """매집 결과 한 섹션(대형/중형): 종목별 카드 + 직관 배지 + 관심종목 추가."""
+def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note,
+                          add_to_sim=None, sim_qty=10):
+    """매집 결과 한 섹션(대형/중형): 종목별 카드 + 직관 배지 + 관심종목/모의매수 추가.
+    add_to_sim(code,name,qty,price,note)->bool: 있으면 '🧪 모의매수' 버튼 표시(price=0→오늘종가)."""
     st.markdown(f"### {title} ({len(rows)}개)")
     st.caption(note)
     if not rows:
@@ -700,7 +713,7 @@ def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note)
         fire, org, timing = _accum_badges(f)
         phase = _accum_phase(f)
         with st.container(border=True):
-            top = st.columns([3.4, 1.3])
+            top = st.columns([3.0, 1.2, 1.4]) if add_to_sim else st.columns([3.4, 1.3])
             top[0].markdown(f"**{i+1}. {f['name']}**　`{f['code']}` · 시총 {f['rank']}위{desc_html(f['code'])}",
                             unsafe_allow_html=True)
             if phase:
@@ -721,6 +734,17 @@ def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note)
                 })
                 save_watchlist(watchlist)
                 st.rerun()
+            # 🧪 모의매수 바로 담기 (콜백은 app.py 소유 — sim_portfolio.json). price=0→오늘 종가 자동
+            if add_to_sim:
+                if top[2].button("🧪 모의매수", key=f"accum_sim_{prefix}_{i}",
+                                 use_container_width=True,
+                                 help=f"오늘 종가로 {sim_qty}주 모의매수 담기(🧪 모의매수 메뉴에서 추적)"):
+                    _note = f"매집 강도 {f['intensity']:.1f}d·변동성 {f.get('vol', 0):.1f}%"
+                    ok = add_to_sim(f["code"], f["name"], sim_qty, 0, _note)
+                    if ok:
+                        st.success(f"🧪 {f['name']} {sim_qty}주 모의매수 담음 (🧪 모의매수 메뉴에서 확인)")
+                    else:
+                        st.error("현재가를 가져오지 못해 담지 못했습니다.")
             b = st.columns(3)
             b[0].markdown(fire)
             b[0].caption(f"강도 {f['intensity']:.1f}일치")

@@ -2500,6 +2500,23 @@ elif mode == "🔭 종목 발굴":
         _di = add_indicators(_df)
         render_analysis_detail(_di, score_signal(_di), name, code, 0, HORIZON)
 
+    def _add_to_sim(code, name, qty, price=0, note=""):
+        """매집 카드 → 모의매수 바로 담기. price=0이면 오늘 종가 자동. 성공 시 True."""
+        bp = int(price)
+        if bp <= 0:
+            _df = load_stock_data(code)
+            bp = int(_df.iloc[-1]["Close"]) if _df is not None and not _df.empty else 0
+        if bp <= 0:
+            return False
+        _sim = load_sim()
+        _sim.append({
+            "code": code, "name": name, "buy_price": bp, "quantity": int(qty),
+            "buy_date": datetime.now().date().isoformat(), "note": note,
+            "added_at": datetime.now().isoformat(),
+        })
+        save_sim(_sim)
+        return True
+
     render_screener(
         load_stock_data=load_stock_data,
         add_indicators=add_indicators,
@@ -2511,6 +2528,7 @@ elif mode == "🔭 종목 발굴":
         get_fundamentals=get_fundamentals,
         show_detail=_screener_show_detail,
         market_regime=get_market_regime(),
+        add_to_sim=_add_to_sim,
     )
 
 elif mode == "🧪 모의매수":
