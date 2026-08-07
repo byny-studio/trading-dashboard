@@ -2175,6 +2175,33 @@ def save_sim(items: list) -> None:
         json.dump(items, f, ensure_ascii=False, indent=2)
 
 
+def sim_upsert(sim: list, code, name, buy_price, qty, buy_date, note=""):
+    """모의매수 편입. 같은 종목이면 수량 합산 + 평단(가중평균)으로 누적, 없으면 신규.
+    buy_date는 최초 매수일 유지(가장 이른 날짜). sim(list) 변경 후 (sim, merged:bool) 반환."""
+    buy_price, qty = int(buy_price), int(qty)
+    for r in sim:
+        if r.get("code") == code:
+            oq = r.get("quantity", 0) or 0
+            ob = r.get("buy_price", 0) or 0
+            nq = oq + qty
+            if nq > 0:
+                r["buy_price"] = round((ob * oq + buy_price * qty) / nq)
+            r["quantity"] = nq
+            r["buys"] = r.get("buys", 1) + 1
+            if buy_date and buy_date < r.get("buy_date", buy_date):
+                r["buy_date"] = buy_date            # 최초 매수일 유지
+            if note:
+                r["note"] = note
+            r["added_at"] = datetime.now().isoformat()
+            return sim, True
+    sim.append({
+        "code": code, "name": name, "buy_price": buy_price, "quantity": qty,
+        "buy_date": buy_date, "note": note, "buys": 1,
+        "added_at": datetime.now().isoformat(),
+    })
+    return sim, False
+
+
 # ===== 📡 포트폴리오 신호 모니터 =====
 def _recent_cross(df, fast_n, slow_n, lookback=3):
     """최근 lookback 거래일 내 골든/데드크로스 발생 → ('golden'|'dead', 며칠전) 또는 None.
@@ -2566,11 +2593,8 @@ elif mode == "🔭 종목 발굴":
         if bp <= 0:
             return False
         _sim = load_sim()
-        _sim.append({
-            "code": code, "name": name, "buy_price": bp, "quantity": int(qty),
-            "buy_date": datetime.now().date().isoformat(), "note": note,
-            "added_at": datetime.now().isoformat(),
-        })
+        _sim, _ = sim_upsert(_sim, code, name, bp, int(qty),
+                             datetime.now().date().isoformat(), note)
         save_sim(_sim)
         return True
 
@@ -2596,6 +2620,16 @@ elif mode == "📒 모의매수":
         "각 매수일부터 **KODEX200(지수) 대비 초과수익**도 함께 계산합니다."
     )
     sim = load_sim()
+    # 기존에 따로 담긴 같은 종목 자동 통합(누적 정책 일괄 적용) — 1회성 정리
+    _consol, _had_dupes = [], False
+    for _it in sim:
+        _consol, _m = sim_upsert(_consol, _it.get("code"), _it.get("name", _it.get("code", "")),
+                                 _it.get("buy_price", 0), _it.get("quantity", 0),
+                                 _it.get("buy_date", ""), _it.get("note", ""))
+        _had_dupes = _had_dupes or _m
+    if _had_dupes:
+        sim = _consol
+        save_sim(sim)
 
     def _sim_detail(code, name):
         _df = load_stock_data(code)
@@ -2629,13 +2663,15 @@ elif mode == "📒 모의매수":
                     if bp <= 0:
                         st.error("매수일 종가를 가져오지 못했습니다. 매수가를 직접 입력해 주세요.")
                     else:
-                        sim.append({
-                            "code": code, "name": name, "buy_price": bp, "quantity": int(qty),
-                            "buy_date": buy_date.isoformat(), "note": note.strip(),
-                            "added_at": datetime.now().isoformat(),
-                        })
+                        sim, merged = sim_upsert(sim, code, name, bp, int(qty),
+                                                 buy_date.isoformat(), note.strip())
                         save_sim(sim)
-                        st.success(f"{format_stock(name, code)} {int(qty)}주 @ {bp:,}원 담음")
+                        if merged:
+                            _r = next(x for x in sim if x["code"] == code)
+                            st.success(f"{format_stock(name, code)} 누적 → 총 {_r['quantity']}주 "
+                                       f"· 평단 {_r['buy_price']:,}원")
+                        else:
+                            st.success(f"{format_stock(name, code)} {int(qty)}주 @ {bp:,}원 담음")
                         st.rerun()
             else:
                 st.warning("종목과 수량(1주 이상)을 입력하세요.")
@@ -2709,7 +2745,8 @@ elif mode == "📒 모의매수":
                     cols[0].caption(_d)
                 if r.get("note"):
                     cols[0].caption(f"📝 {r['note']}")
-                cols[1].caption("매수가 × 수량")
+                _buys = r.get("buys", 1)
+                cols[1].caption("평단 × 수량" + (f" · {_buys}회 누적" if _buys > 1 else ""))
                 cols[1].write(f"{r['buy_price']:,} × {r['quantity']}")
                 cols[2].caption(f"현재가 · 보유 {r['held']}일")
                 cols[2].write(f"{r['cur']:,}원")
