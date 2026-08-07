@@ -149,6 +149,10 @@ def format_stock(name: str, code: str) -> str:
     return f"{name}({code})"
 
 
+# 종목 업종·주요제품 한 줄 설명(종목명 옆 회색 글씨) — 공용 모듈
+from stock_meta import stock_desc, desc_html  # noqa: E402
+
+
 def _relative_time(pub_str: str) -> str:
     """RFC822 발행시각 → 상대시간 표기('방금'/'25분 전'/'3시간 전'/'2일 전')."""
     if not pub_str:
@@ -445,6 +449,26 @@ def get_supply_demand(code: str, days: int = 20) -> dict:
             "inst_20": _sum("inst", len(rows)), "frgn_20": _sum("frgn", len(rows)),
             "n": len(rows),
         }
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=1800)
+def get_kiwoom_supply(code: str) -> dict:
+    """키움 ka10059 20일 투자자별 수급 → 사모 중심 매집 판단(flow_verdict).
+    키움 미설정/실패 시 {} → 호출측이 네이버 수급으로 폴백(클라우드는 네이버). 로컬에서만 사모까지."""
+    import os, sys
+    try:
+        ad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autotrade")
+        if os.path.isdir(ad) and ad not in sys.path:
+            sys.path.insert(0, ad)
+        from kiwoom_api import from_secrets
+        from accumulation import flow_verdict, kiwoom_flow
+        api = from_secrets()
+        fl = kiwoom_flow(api, code)
+        if fl is None or len(fl) < 12:
+            return {}
+        return flow_verdict(fl)
     except Exception:
         return {}
 
@@ -1448,7 +1472,7 @@ def render_portfolio_backtest(code: str, name: str, period_days: int = 1120, hor
         st.warning("유효한 백테스트 결과를 만들지 못했습니다.")
         return
 
-    st.markdown(f"**🧪 {format_stock(name, code)} 백테스트 (최근 3년)**")
+    st.markdown(f"**🧪 {format_stock(name, code)} 백테스트 (최근 3년)**{desc_html(code)}", unsafe_allow_html=True)
     t1, t2 = st.tabs(["📈 추세 전략", "🔄 반등 전략"])
     with t1:
         _render_one_backtest(trend_res, "📈 추세 점수 기준")
@@ -1842,7 +1866,7 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
     prev = df_ind.iloc[-2] if len(df_ind) >= 2 else last
     chg = (last["Close"] - prev["Close"]) / prev["Close"] * 100
 
-    st.markdown(f"## 📌 {format_stock(name, code)}")
+    st.markdown(f"## 📌 {format_stock(name, code)}{desc_html(code)}", unsafe_allow_html=True)
 
     # 펀더멘털 한 줄 요약 (PER/PBR/배당률/EPS)
     fund = get_fundamentals(code)
@@ -1959,35 +1983,80 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
         st.markdown("\n".join(lines))
         st.caption("단위: 매출·이익=억원 · (E)=증권사 추정치 · 출처: 네이버 금융 기업실적분석")
 
-    # ===== 수급 (외국인 · 기관 순매매) =====
-    sd = get_supply_demand(code)
-    if sd and sd.get("rows"):
-        st.markdown("### 💰 수급 (외국인 · 기관)")
-        f5, i5 = sd["frgn_5"], sd["inst_5"]
-        # 5일 누적 방향으로 판단
-        if f5 > 0 and i5 > 0:
-            judge = "🟢 외국인·기관 **동반 순매수** — 강한 매집 신호"
-        elif f5 < 0 and i5 < 0:
-            judge = "🔴 외국인·기관 **동반 순매도** — 수급 이탈"
-        elif f5 > 0:
-            judge = "🟡 외국인 순매수 · 기관 순매도 — 외국인 주도"
-        elif i5 > 0:
-            judge = "🟡 기관 순매수 · 외국인 순매도 — 기관 주도"
-        else:
-            judge = "⚪ 뚜렷한 수급 방향 없음"
-        st.info(f"{judge}")
-        cs1, cs2 = st.columns(2)
-        cs1.metric("외국인 5일 누적", f"{f5:+,.0f}주", f"20일 {sd['frgn_20']:+,.0f}")
-        cs2.metric("기관 5일 누적", f"{i5:+,.0f}주", f"20일 {sd['inst_20']:+,.0f}")
-        with st.expander(f"📋 일별 순매매 {sd['n']}일 펼쳐보기"):
-            dl = ["| 날짜 | 종가 | 기관 | 외국인 | 외국인보유율 |", "|---|---|---|---|---|"]
-            for row in sd["rows"]:
-                dl.append(
-                    f"| {row['date']} | {row['close']:,.0f} | "
-                    f"{(row['inst'] or 0):+,.0f} | {(row['frgn'] or 0):+,.0f} | {row['frgn_ratio']} |"
-                )
-            st.markdown("\n".join(dl))
-        st.caption("단위: 주 · (+)순매수 / (−)순매도 · 출처: 네이버 금융")
+    # ===== 수급 (투자자별) — 키움(사모 중심) 우선, 없으면 네이버 폴백 =====
+    kf = get_kiwoom_supply(code)
+    if kf:
+        st.markdown("### 💰 수급 (투자자별 · 키움)")
+        # ── 당일(장중 실시간 잠정치) 순매수 — 20일 누적에 묻히는 오늘 방향을 최상단 강조 ──
+        td = kf.get("today") or {}
+        if td:
+            dt_s = td["dt"]
+            dt_fmt = f"{dt_s[:4]}.{dt_s[4:6]}.{dt_s[6:]}" if len(dt_s) == 8 else dt_s
+            # 당일 외국인·기관이 20일 누적과 반대(누적 순매수인데 당일 1만주↑ 매도)면 경고
+            th = 10000
+            frgn_flip = kf.get("frgn_net", 0) > 0 and td["frgn"] <= -th
+            orgn_flip = kf.get("orgn_net", 0) > 0 and td["orgn"] <= -th
+            if frgn_flip or orgn_flip:
+                who = " · ".join(w for w, f in [("외국인", frgn_flip), ("기관", orgn_flip)] if f)
+                st.error(f"⚠️ **당일({dt_fmt}) {who} 대량 순매도** — 20일 누적은 순매수지만 오늘 수급 급반전(장중 잠정치). 최신 흐름 우선 판단!")
+            st.markdown(f"**📆 당일 순매수 ({dt_fmt} · 장중 잠정)**")
+            tc = st.columns(4)
+            tc[0].metric("사모", f"{td['samo']/1e4:+,.1f}만주")
+            tc[1].metric("기관계", f"{td['orgn']/1e4:+,.1f}만주")
+            tc[2].metric("개인", f"{td['ind']/1e4:+,.1f}만주")
+            tc[3].metric("외국인", f"{td['frgn']/1e4:+,.1f}만주")
+        st.info(kf["headline"])
+        if kf.get("phase"):
+            emoji, title, desc = kf["phase"]
+            st.markdown(f"**{emoji} {title}** — {desc}")
+        st.markdown(f"**📊 20일 누적 (n={kf['n']}일)**")
+        cs = st.columns(4)
+        cs[0].metric("사모", f"{kf['samo_net']/1e4:+,.0f}만주", help="예측력 1위(검증)")
+        cs[1].metric("기관계", f"{kf['orgn_net']/1e4:+,.0f}만주")
+        cs[2].metric("개인", f"{kf['ind_net']/1e4:+,.0f}만주", help="−(마이너스)=개미이탈=좋은 신호")
+        cs[3].metric("외국인", f"{kf['frgn_net']/1e4:+,.0f}만주", help="예측력 낮음~역신호")
+        r5 = kf.get("recent5")
+        if r5:
+            st.caption(f"↳ 최근 5일 누적: 사모 {r5['samo']:+,} · 기관 {r5['orgn']:+,} · 개인 {r5['ind']:+,} · 외국인 {r5['frgn']:+,} (주)")
+        daily = kf.get("daily") or []
+        if daily:
+            with st.expander(f"📋 일별 순매수 {len(daily)}일 펼쳐보기 (단위: 주 · 최신순)"):
+                dl = ["| 날짜 | 사모 | 기관계 | 개인 | 외국인 |", "|---|---|---|---|---|"]
+                for d in daily:
+                    ds = d["dt"]
+                    ds = f"{ds[4:6]}/{ds[6:]}" if len(ds) == 8 else ds
+                    dl.append(f"| {ds} | {d['samo']:+,} | {d['orgn']:+,} | {d['ind']:+,} | {d['frgn']:+,} |")
+                st.markdown("\n".join(dl))
+        st.caption("⚠️ 검증(강세장 100일·생존편향): 사모>금융투자>투신>기관 예측력 · 외국인은 무의미~역신호 · **매수 확신 보조**용. · 당일은 장중 잠정치(마감 후 확정).")
+    else:
+        sd = get_supply_demand(code)
+        if sd and sd.get("rows"):
+            st.markdown("### 💰 수급 (외국인 · 기관)")
+            f5, i5 = sd["frgn_5"], sd["inst_5"]
+            # 5일 누적 방향으로 판단
+            if f5 > 0 and i5 > 0:
+                judge = "🟢 외국인·기관 **동반 순매수**"
+            elif f5 < 0 and i5 < 0:
+                judge = "🔴 외국인·기관 **동반 순매도** — 수급 이탈"
+            elif f5 > 0:
+                judge = "🟡 외국인 순매수 · 기관 순매도"
+            elif i5 > 0:
+                judge = "🟡 기관 순매수 · 외국인 순매도"
+            else:
+                judge = "⚪ 뚜렷한 수급 방향 없음"
+            st.info(f"{judge}")
+            cs1, cs2 = st.columns(2)
+            cs1.metric("외국인 5일 누적", f"{f5:+,.0f}주", f"20일 {sd['frgn_20']:+,.0f}")
+            cs2.metric("기관 5일 누적", f"{i5:+,.0f}주", f"20일 {sd['inst_20']:+,.0f}")
+            with st.expander(f"📋 일별 순매매 {sd['n']}일 펼쳐보기"):
+                dl = ["| 날짜 | 종가 | 기관 | 외국인 | 외국인보유율 |", "|---|---|---|---|---|"]
+                for row in sd["rows"]:
+                    dl.append(
+                        f"| {row['date']} | {row['close']:,.0f} | "
+                        f"{(row['inst'] or 0):+,.0f} | {(row['frgn'] or 0):+,.0f} | {row['frgn_ratio']} |"
+                    )
+                st.markdown("\n".join(dl))
+            st.caption("단위: 주 · (+)순매수 / (−)순매도 · 출처: 네이버 금융 · ⚠️키움 연결 시 사모까지 분석")
 
     if tr["total"] >= 55 or rv["total"] >= 55:
         st.markdown("### 💵 매수 가격대 제안")
@@ -2364,7 +2433,7 @@ elif mode == "🧪 백테스트":
                 with st.spinner("임계점 조합 시뮬 중..."):
                     trend_res = sweep_thresholds(scores, score_key="trend", market_filter=True)
                     rev_res = sweep_thresholds(scores, score_key="reversion")
-                st.markdown(f"### {format_stock(name, code)} · {bt_period}")
+                st.markdown(f"### {format_stock(name, code)} · {bt_period}{desc_html(code)}", unsafe_allow_html=True)
                 tt, tr = st.tabs(["📈 추세 전략", "🔄 반등 전략"])
                 with tt:
                     _render_full_backtest(trend_res, "추세")
@@ -2402,6 +2471,15 @@ elif mode == "🌐 테마·이슈":
     )
 
 elif mode == "🔭 종목 발굴":
+    def _screener_show_detail(code, name):
+        """발굴·관심종목 클릭 → 단일 종목 분석과 동일한 풀 상세(재무·수급·매수가격대 포함)."""
+        _df = load_stock_data(code)
+        if _df is None or _df.empty:
+            st.error(f"{name}({code}) 데이터를 가져올 수 없습니다.")
+            return
+        _di = add_indicators(_df)
+        render_analysis_detail(_di, score_signal(_di), name, code, 0, HORIZON)
+
     render_screener(
         load_stock_data=load_stock_data,
         add_indicators=add_indicators,
@@ -2411,6 +2489,8 @@ elif mode == "🔭 종목 발굴":
         reversion_score=reversion_score,
         momentum_score=momentum_score,
         get_fundamentals=get_fundamentals,
+        show_detail=_screener_show_detail,
+        market_regime=get_market_regime(),
     )
 
 else:  # 포트폴리오 관리
@@ -2530,6 +2610,9 @@ else:  # 포트폴리오 관리
                             st.session_state.pop("portfolio_edit", None)
                             st.session_state.pop("portfolio_backtest", None)
                         st.rerun()
+                    _desc = stock_desc(code)
+                    if _desc:
+                        st.caption(_desc)
                     st.markdown(
                         "<div style='font-size:13px;line-height:1.9;color:var(--ds-text-muted)'>"
                         f"🔔 {signal_text}<br>"
@@ -2574,6 +2657,9 @@ else:  # 포트폴리오 관리
                         st.session_state.pop("portfolio_edit", None)
                         st.session_state.pop("portfolio_backtest", None)
                     st.rerun()
+                _desc = stock_desc(code)
+                if _desc:
+                    cols[0].caption(_desc)
                 # cols[1]은 종목 ↔ 매매신호 사이 여백 (spacer)
                 cols[2].write(signal_text)
                 cols[3].write(f"{buy:,}")

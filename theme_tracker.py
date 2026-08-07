@@ -16,6 +16,10 @@ from bs4 import BeautifulSoup
 UA = {"User-Agent": "Mozilla/5.0"}
 
 
+# 종목 업종·주요제품 한 줄 설명(종목명 옆 회색 글씨) — 공용 모듈
+from stock_meta import stock_desc as _stock_desc, desc_html as _desc_html  # noqa: E402,F401
+
+
 # ===== 1. 거시 지표 =====
 @st.cache_data(ttl=1800)
 def get_macro_dashboard() -> list:
@@ -671,8 +675,12 @@ def render_theme_tracker(get_market_news=None, load_stock_data=None, add_indicat
                                      type="primary" if sel else "secondary"):
                             st.session_state["theme_stock_sel"] = None if sel else s["name"]
                             st.rerun()
+                        _dt = _stock_desc(s.get("code", ""))
+                        if _dt:
+                            st.caption(_dt)
                     else:
-                        st.markdown(f"**{crown}{s['name']}**")
+                        st.markdown(f"**{crown}{s['name']}**{_desc_html(s.get('code', ''))}",
+                                    unsafe_allow_html=True)
 
                 # 추세 강한 순 카드 4개 (종목명 클릭 → 상세)
                 by_trend = sorted(ranked, key=lambda x: x["trend"], reverse=True)
