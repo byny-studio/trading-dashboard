@@ -2210,7 +2210,7 @@ def clear_history() -> None:
 
 
 # ===== 사이드바 =====
-MODES = ["🔍 단일 종목 분석", "📋 포트폴리오 관리", "🌐 테마·이슈", "📜 분석 기록", "🧪 백테스트", "🔭 종목 발굴", "🧪 모의매수"]
+MODES = ["🔍 단일 종목 분석", "📋 포트폴리오 관리", "🌐 테마·이슈", "📜 분석 기록", "🧪 백테스트", "🔭 종목 발굴", "📒 모의매수"]
 MODE_KEYS = {"single": MODES[0], "portfolio": MODES[1], "theme": MODES[2], "history": MODES[3], "backtest": MODES[4], "screener": MODES[5], "sim": MODES[6]}
 KEY_BY_MODE = {v: k for k, v in MODE_KEYS.items()}
 
@@ -2531,8 +2531,8 @@ elif mode == "🔭 종목 발굴":
         add_to_sim=_add_to_sim,
     )
 
-elif mode == "🧪 모의매수":
-    st.title("🧪 모의매수 시뮬레이션")
+elif mode == "📒 모의매수":
+    st.title("📒 모의매수 시뮬레이션")
     st.caption(
         "발굴한 매집 종목을 **'샀다 치고'** 담아 실제 계좌처럼 손익을 추적하는 **가상 장부**입니다. "
         "실제 돈은 안 나갑니다. 매집 발굴+매수가 실제로 먹히는지 시간을 두고 검증하세요. "
