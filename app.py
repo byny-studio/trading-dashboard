@@ -454,8 +454,9 @@ def get_supply_demand(code: str, days: int = 20) -> dict:
 
 
 @st.cache_data(ttl=1800)
+@st.cache_data(ttl=600, show_spinner=False)
 def get_kiwoom_supply(code: str) -> dict:
-    """키움 ka10059 20일 투자자별 수급 → 사모 중심 매집 판단(flow_verdict).
+    """키움 ka10059 20일 투자자별 수급 → 사모 중심 매집 판단(flow_verdict). 10분 캐시.
     키움 미설정/실패 시 {} → 호출측이 네이버 수급으로 폴백(클라우드는 네이버). 로컬에서만 사모까지."""
     import os, sys
     try:
@@ -2174,6 +2175,62 @@ def save_sim(items: list) -> None:
         json.dump(items, f, ensure_ascii=False, indent=2)
 
 
+# ===== 📡 포트폴리오 신호 모니터 =====
+def _recent_cross(df, fast_n, slow_n, lookback=3):
+    """최근 lookback 거래일 내 골든/데드크로스 발생 → ('golden'|'dead', 며칠전) 또는 None.
+    며칠전: 0=오늘, 1=하루 전 …. (추세 전환 순간 포착)"""
+    f = df.get(f"MA{fast_n}"); s = df.get(f"MA{slow_n}")
+    if f is None or s is None or len(df) < slow_n + 2:
+        return None
+    for k in range(1, lookback + 1):
+        a, b = -k, -k - 1
+        if pd.notna(f.iloc[a]) and pd.notna(s.iloc[a]) and pd.notna(f.iloc[b]) and pd.notna(s.iloc[b]):
+            if f.iloc[b] <= s.iloc[b] and f.iloc[a] > s.iloc[a]:
+                return ("golden", k - 1)
+            if f.iloc[b] >= s.iloc[b] and f.iloc[a] < s.iloc[a]:
+                return ("dead", k - 1)
+    return None
+
+
+def portfolio_signal_monitor(portfolio, horizon="short", check_accum=False):
+    """보유종목 전체 스캔 → 추세전환(크로스)·과열·(옵션)매집 신호가 잡힌 종목만 반환.
+    추세전환·과열은 FDR(클라우드 O), 매집은 키움(로컬 O, check_accum=True일 때만)."""
+    fast_n, slow_n = (60, 120) if horizon == "mid" else (5, 20)
+    hits = []
+    for it in portfolio:
+        code = str(it.get("code", "")).zfill(6)
+        if not code:
+            continue
+        df = load_stock_data(code)
+        if df is None or df.empty or len(df) < 60:
+            continue
+        df = add_indicators(df)
+        sigs = []
+        cx = _recent_cross(df, fast_n, slow_n)
+        if cx:
+            when = "오늘" if cx[1] == 0 else f"{cx[1]}일 전"
+            if cx[0] == "golden":
+                sigs.append(("🟢 추세전환 골든크로스",
+                             f"{when} {fast_n}/{slow_n} 골든크로스 — 상승 전환 신호"))
+            else:
+                sigs.append(("🔴 추세전환 데드크로스",
+                             f"{when} {fast_n}/{slow_n} 데드크로스 — 하락 전환 신호"))
+        oh = overheat_signal(df, horizon)
+        if oh.get("level") == 2:
+            sigs.append(("🔥 과열", oh.get("text", "과열 구간 — 차익 주의")))
+        if check_accum:
+            kf = get_kiwoom_supply(code)
+            if kf and kf.get("accumulating"):
+                txt = kf.get("headline", "매집 진행")
+                ph = kf.get("phase")
+                if ph:
+                    txt += f" · {ph[0]} {ph[1]}"
+                sigs.append(("🏛️ 매집 신호", txt))
+        if sigs:
+            hits.append({"code": code, "name": it.get("name", code), "signals": sigs})
+    return hits
+
+
 # ===== 분석 기록 저장/로드 =====
 def load_history() -> list:
     # 클라우드: Secrets(history_json) 우선 — 개인데이터는 gitignore라 클라우드엔 Secrets로만 전달
@@ -2697,6 +2754,26 @@ else:  # 포트폴리오 관리
 
     if portfolio:
         mobile = is_mobile()
+
+        # ----- 📡 신호 모니터 (추세 전환·매집이 잡힌 보유종목만) -----
+        with st.expander("📡 신호 모니터 — 추세 전환·매집이 잡힌 보유종목", expanded=True):
+            st.caption("보유종목을 훑어 **추세 전환(골든/데드크로스)·과열**을 자동 표시합니다(최근 3거래일 내). "
+                       "매집(사모·기관 수급)은 키움 필요라 아래 체크 시 **로컬에서만** 확인됩니다.")
+            check_accum = st.checkbox("🏛️ 매집 신호도 확인 (키움·로컬, 조금 느림)",
+                                      value=False, key="mon_accum")
+            with st.spinner("보유종목 신호 스캔 중..."):
+                hits = portfolio_signal_monitor(portfolio, HORIZON, check_accum=check_accum)
+            if not hits:
+                _scope = "추세 전환·과열" + ("·매집" if check_accum else "")
+                st.success(f"현재 {_scope} 신호가 잡힌 보유종목이 없습니다.")
+            else:
+                for h in hits:
+                    badges = "　".join(b for b, _ in h["signals"])
+                    st.markdown(f"**{format_stock(h['name'], h['code'])}** — {badges}")
+                    for _, msg in h["signals"]:
+                        st.caption(f"　└ {msg}")
+            st.caption("⚠️ 참고용 신호 · 매매 판단은 종목 상세·백테스트로 확인.")
+
         st.markdown("### 현재 보유 종목")
         st.caption("👇 종목 이름을 누르면 그 자리 바로 아래에 상세 분석이 펼쳐집니다.")
         with st.expander("📖 신호 보는 법 (추세/반등)"):

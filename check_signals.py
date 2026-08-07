@@ -164,6 +164,26 @@ def early_momentum_themes(themes, top=3, min_vol=1.2):
     return out
 
 
+def _recent_cross(df, fast_n, slow_n, lookback=2):
+    """최근 lookback 거래일 내 골든/데드크로스 → ('golden'|'dead', 며칠전) 또는 None.
+    (추세 전환 순간 포착 — 디스코드는 오늘/어제 발생분만 알림)"""
+    f = df.get(f"MA{fast_n}"); s = df.get(f"MA{slow_n}")
+    if f is None or s is None or len(df) < slow_n + 2:
+        return None
+    for k in range(1, lookback + 1):
+        try:
+            fa, sa, fb, sb = f.iloc[-k], s.iloc[-k], f.iloc[-k - 1], s.iloc[-k - 1]
+        except Exception:
+            continue
+        if any(v != v for v in (fa, sa, fb, sb)):   # NaN 스킵
+            continue
+        if fb <= sb and fa > sa:
+            return ("golden", k - 1)
+        if fb >= sb and fa < sa:
+            return ("dead", k - 1)
+    return None
+
+
 def add_indicators(df):
     df = df.copy()
     for n in (5, 20, 60, 120):
@@ -413,9 +433,10 @@ def main():
     # 시장 국면따라 관점 자동선택: 상승=중장기(추세 길게) / 중립·하락=단기(방어). app.py 자동모드와 동일
     horizon = "mid" if reg["regime"] == "상승" else "short"
     hz_label = "📆 중장기(1~3개월)" if horizon == "mid" else "⚡ 단기(데이·스윙)"
+    fast_n, slow_n = (60, 120) if horizon == "mid" else (5, 20)
     end = datetime.now()
     start = end - timedelta(days=400)   # MA120 계산 위해 중장기는 데이터 더 필요
-    take_profit, cut_loss, add_more = [], [], []
+    take_profit, cut_loss, add_more, trend_turn = [], [], [], []
     ref_date = ""
 
     for it in portfolio:
@@ -434,6 +455,12 @@ def main():
         price = int(df.iloc[-1]["Close"])
         t, r = trend_score(df, horizon), reversion_score(df, horizon)
         lvl, _ = overheat(df, horizon)
+        # 추세 전환(골든/데드크로스) — 포지션 제안과 무관하게 잡히면 알림
+        cx = _recent_cross(df, fast_n, slow_n)
+        if cx:
+            when = "오늘" if cx[1] == 0 else f"{cx[1]}일 전"
+            kind = "🟢 골든크로스(상승 전환)" if cx[0] == "golden" else "🔴 데드크로스(하락 전환)"
+            trend_turn.append(f"• **{name}** {price:,}원 — {kind} · {when} {fast_n}/{slow_n}")
         act = position_action(buy, price, t, r, lvl, bull, horizon, it.get("strategy", "auto"))
         if not act:
             continue
@@ -453,7 +480,7 @@ def main():
     except Exception:
         rising = []
 
-    if not (take_profit or cut_loss or add_more or news_themes or rising):
+    if not (take_profit or cut_loss or add_more or trend_turn or news_themes or rising):
         print("제안·테마 없음 — 알림 생략")
         return
 
@@ -478,6 +505,8 @@ def main():
         lines += ["", "🌱 **막 살아나는 테마** (거래량 유입 동반 · 선점 후보)"]
         lines += [f"• {t['name']} {t['chg']:+.1f}% (3일 {t['chg3']:+.1f}%, 거래량 {t.get('vol', 0):.1f}배) · 대장주: {', '.join(t['leads'][:3])}"
                   for t in rising]
+    if trend_turn:
+        lines += ["", "🔄 **추세 전환 발생** (보유종목 크로스)"] + trend_turn
     if take_profit:
         lines += ["", "💰 **익절 고려** (시초가 일부 매도)"] + take_profit
     if cut_loss:
