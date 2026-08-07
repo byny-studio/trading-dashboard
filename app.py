@@ -2154,6 +2154,26 @@ def save_portfolio(items: list) -> None:
         json.dump(items, f, ensure_ascii=False, indent=2)
 
 
+# ===== 모의매수 (가상 매매 장부) =====
+SIM_FILE = "sim_portfolio.json"
+
+
+def load_sim() -> list:
+    """모의매수 종목 로드 (개인데이터, gitignore)."""
+    if not os.path.exists(SIM_FILE):
+        return []
+    try:
+        with open(SIM_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_sim(items: list) -> None:
+    with open(SIM_FILE, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+
+
 # ===== 분석 기록 저장/로드 =====
 def load_history() -> list:
     # 클라우드: Secrets(history_json) 우선 — 개인데이터는 gitignore라 클라우드엔 Secrets로만 전달
@@ -2190,8 +2210,8 @@ def clear_history() -> None:
 
 
 # ===== 사이드바 =====
-MODES = ["🔍 단일 종목 분석", "📋 포트폴리오 관리", "🌐 테마·이슈", "📜 분석 기록", "🧪 백테스트", "🔭 종목 발굴"]
-MODE_KEYS = {"single": MODES[0], "portfolio": MODES[1], "theme": MODES[2], "history": MODES[3], "backtest": MODES[4], "screener": MODES[5]}
+MODES = ["🔍 단일 종목 분석", "📋 포트폴리오 관리", "🌐 테마·이슈", "📜 분석 기록", "🧪 백테스트", "🔭 종목 발굴", "🧪 모의매수"]
+MODE_KEYS = {"single": MODES[0], "portfolio": MODES[1], "theme": MODES[2], "history": MODES[3], "backtest": MODES[4], "screener": MODES[5], "sim": MODES[6]}
 KEY_BY_MODE = {v: k for k, v in MODE_KEYS.items()}
 
 # 새로고침 시 마지막 화면 복원: query_params → session_state
@@ -2492,6 +2512,142 @@ elif mode == "🔭 종목 발굴":
         show_detail=_screener_show_detail,
         market_regime=get_market_regime(),
     )
+
+elif mode == "🧪 모의매수":
+    st.title("🧪 모의매수 시뮬레이션")
+    st.caption(
+        "발굴한 매집 종목을 **'샀다 치고'** 담아 실제 계좌처럼 손익을 추적하는 **가상 장부**입니다. "
+        "실제 돈은 안 나갑니다. 매집 발굴+매수가 실제로 먹히는지 시간을 두고 검증하세요. "
+        "각 매수일부터 **KODEX200(지수) 대비 초과수익**도 함께 계산합니다."
+    )
+    sim = load_sim()
+
+    def _sim_detail(code, name):
+        _df = load_stock_data(code)
+        if _df is None or _df.empty:
+            st.error(f"{name}({code}) 데이터를 가져올 수 없습니다.")
+            return
+        _di = add_indicators(_df)
+        render_analysis_detail(_di, score_signal(_di), name, code, 0, HORIZON)
+
+    # ----- 추가 폼 -----
+    with st.form("sim_add", clear_on_submit=True):
+        c1, c2, c3, c4 = st.columns([2.2, 1, 1.3, 1.3])
+        q = c1.text_input("종목 코드/이름", placeholder="예: 008930 또는 한미사이언스")
+        qty = c2.number_input("수량", min_value=0, step=1)
+        price = c3.number_input("매수가(0=매수일 종가 자동)", min_value=0, step=100)
+        buy_date = c4.date_input("매수일", value=datetime.now().date())
+        note = st.text_input("메모(선택) — 왜 담았는지", placeholder="예: 저변동 매집·체결강도 155")
+        if st.form_submit_button("➕ 모의매수 담기", type="primary"):
+            if q and qty > 0:
+                code, name, found = resolve_stock(q)
+                if not found:
+                    st.error(f"'{q}' 종목을 찾을 수 없습니다. 코드/이름을 확인하세요.")
+                else:
+                    bp = int(price)
+                    if bp <= 0:   # 매수가 미입력 → 매수일 종가 자동
+                        try:
+                            _bd = fdr.DataReader(code, buy_date)
+                            bp = int(_bd.iloc[0]["Close"]) if _bd is not None and not _bd.empty else 0
+                        except Exception:
+                            bp = 0
+                    if bp <= 0:
+                        st.error("매수일 종가를 가져오지 못했습니다. 매수가를 직접 입력해 주세요.")
+                    else:
+                        sim.append({
+                            "code": code, "name": name, "buy_price": bp, "quantity": int(qty),
+                            "buy_date": buy_date.isoformat(), "note": note.strip(),
+                            "added_at": datetime.now().isoformat(),
+                        })
+                        save_sim(sim)
+                        st.success(f"{format_stock(name, code)} {int(qty)}주 @ {bp:,}원 담음")
+                        st.rerun()
+            else:
+                st.warning("종목과 수량(1주 이상)을 입력하세요.")
+
+    if not sim:
+        st.info("아직 모의매수 종목이 없습니다. 위에서 담아보세요. "
+                "(🔭 종목 발굴 → 매집 종목의 코드를 여기에 추가)")
+    else:
+        # KODEX200 벤치마크 시계열(넉넉히 로드) — 각 매수일부터 지금까지 수익
+        kodex = load_stock_data("069500", days=1500)
+
+        def _kodex_ret(from_date):
+            if kodex is None or kodex.empty:
+                return None
+            try:
+                base = kodex[kodex.index >= pd.Timestamp(from_date)]
+                if base.empty:
+                    return None
+                return float(kodex.iloc[-1]["Close"] / base.iloc[0]["Close"] - 1)
+            except Exception:
+                return None
+
+        rows = []
+        tot_cost = tot_val = 0
+        bench_num = 0.0   # 투자금 가중 벤치마크 수익 합
+        for it in sim:
+            code = it.get("code", ""); name = it.get("name", "")
+            bp = it.get("buy_price", 0) or 0; qty = it.get("quantity", 0) or 0
+            df = load_stock_data(code) if code else pd.DataFrame()
+            cur = int(df.iloc[-1]["Close"]) if df is not None and not df.empty else 0
+            cost = bp * qty; val = cur * qty
+            pl = val - cost; plpct = (pl / cost * 100) if cost else 0
+            tot_cost += cost; tot_val += val
+            br = _kodex_ret(it.get("buy_date"))
+            if br is not None:
+                bench_num += br * cost
+            try:
+                held = (datetime.now().date() - datetime.fromisoformat(it["buy_date"]).date()).days
+            except Exception:
+                held = 0
+            rows.append({**it, "cur": cur, "cost": cost, "val": val, "pl": pl,
+                         "plpct": plpct, "bench": (br * 100 if br is not None else None),
+                         "held": held})
+
+        # ----- 요약 -----
+        tot_pl = tot_val - tot_cost
+        tot_plpct = (tot_pl / tot_cost * 100) if tot_cost else 0
+        bench_pct = (bench_num / tot_cost * 100) if tot_cost else 0
+        alpha = tot_plpct - bench_pct
+        m = st.columns(4)
+        m[0].metric("총 투자금(모의)", f"{tot_cost:,}원")
+        m[1].metric("현재 평가금", f"{tot_val:,}원", f"{tot_pl:+,}원")
+        m[2].metric("모의 수익률", f"{tot_plpct:+.1f}%")
+        m[3].metric("지수(KODEX200) 대비", f"{alpha:+.1f}%p", f"지수 {bench_pct:+.1f}%")
+        st.caption("⚠️ 참고용 시뮬레이션 · 매집 신호는 워치리스트 참고(자동매매 아님). "
+                   "지수대비는 각 매수일부터 계산·투자금 가중.")
+        st.markdown("---")
+
+        # ----- 종목별 카드 -----
+        for i, r in enumerate(rows):
+            with st.container(border=True):
+                cols = st.columns([2.6, 1.5, 1.6, 1.9, 0.7])
+                sel = st.session_state.get("sim_detail") == r["code"]
+                if cols[0].button(format_stock(r.get("name", ""), r["code"]),
+                                  key=f"sim_b_{i}", use_container_width=True,
+                                  type="primary" if sel else "secondary"):
+                    st.session_state["sim_detail"] = None if sel else r["code"]
+                    st.rerun()
+                _d = stock_desc(r["code"])
+                if _d:
+                    cols[0].caption(_d)
+                if r.get("note"):
+                    cols[0].caption(f"📝 {r['note']}")
+                cols[1].caption("매수가 × 수량")
+                cols[1].write(f"{r['buy_price']:,} × {r['quantity']}")
+                cols[2].caption(f"현재가 · 보유 {r['held']}일")
+                cols[2].write(f"{r['cur']:,}원")
+                cols[3].caption("평가손익")
+                cols[3].write(f"{r['pl']:+,}원 ({r['plpct']:+.1f}%)")
+                if r["bench"] is not None:
+                    cols[3].caption(f"지수 {r['bench']:+.1f}% · 초과 {r['plpct'] - r['bench']:+.1f}%p")
+                if cols[4].button("🗑️", key=f"sim_del_{i}", help="삭제"):
+                    if st.session_state.get("sim_detail") == r["code"]:
+                        st.session_state["sim_detail"] = None
+                    sim.pop(i); save_sim(sim); st.rerun()
+                if sel:
+                    _sim_detail(r["code"], r.get("name", ""))
 
 else:  # 포트폴리오 관리
     st.title("📋 포트폴리오 관리")
