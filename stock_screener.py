@@ -27,6 +27,19 @@ from candle_analyzer import analyze_candle
 
 WATCHLIST_FILE = "watchlist.json"
 
+
+# 종목 업종·주요제품 한 줄 설명(종목명 옆 회색 글씨) — 공용 모듈
+from stock_meta import stock_desc, desc_html  # noqa: E402,F401
+
+
+def _autotrade_path() -> str:
+    """autotrade 폴더를 sys.path에 넣어 키움 API·매집 스캐너를 import 가능하게. 경로 반환."""
+    import sys
+    ad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autotrade")
+    if os.path.isdir(ad) and ad not in sys.path:
+        sys.path.insert(0, ad)
+    return ad
+
 DEFAULT_THRESHOLD = 72   # 매수 관심 (강함) 이상 — 100점 만점 기준
 STRONG_THRESHOLD = 80    # 강력 매수 — 100점 만점 기준
 MAX_SCORE = 100
@@ -108,6 +121,41 @@ def financial_health(fund: dict) -> dict:
     return {"ok": True, "grade": "🟡주의", "reason": "이익 지표 불명확(보류)"}
 
 
+def _recommend_mode(reg: dict):
+    """시장 국면(get_market_regime) → 추천 발굴 기준 (모드, 근거, 배너레벨).
+    검증(verify_regime.py, 최근 급락+반등 40일): 반등 유일 지수초과(+0.6%p·승률38%),
+    모멘텀 최악(-1.9%p). OOS(backtest_oos): 추세=강세장 강함, 반등=하락/횡보 방어 우월."""
+    regime = reg.get("regime", "중립")
+    gap = reg.get("gap_pct", 0)         # 지수 vs MA200
+    if reg.get("crash"):                # 급락(후 반등초입) → 낙폭과대 반등
+        return ("🔄 반등(과매도)",
+                f"급락 국면(60일 고점대비 {reg.get('dd_from_peak', 0):+.0f}%) — 낙폭과대 반등 노림. "
+                f"최근검증상 이 국면 **유일하게 지수 초과**(+0.6%p·승률 최고), 모멘텀 최악.", "warning")
+    if regime == "상승":
+        return ("📈 단기 추세 · 🚀 모멘텀",
+                f"상승추세(지수 MA200 {gap:+.0f}%) — 추세 추종·모멘텀 유리(강세장 검증).", "success")
+    if regime == "하락":
+        return ("🔄 반등(과매도)",
+                "하락 국면 — 낙폭과대 방어 반등이 검증상 우월(승률↑).", "warning")
+    return ("🔄 반등(과매도) · ⚖️ 종합",
+            "중립/횡보 — 뚜렷한 추세 없음, 반등·종합이 무난.", "info")
+
+
+def _render_regime_reco(reg: dict):
+    """발굴 페이지 상단: 현재 시장 국면 + 추천 발굴 기준 배너."""
+    if not reg or not reg.get("ok", True):
+        return
+    mode, why, level = _recommend_mode(reg)
+    head = f"🧭 **현재 시장 국면: {reg.get('regime', '?')}**"
+    if reg.get("crash"):
+        head += " · ⚠️급락"
+    head += (f"　(KOSPI {reg.get('index', 0):,.0f} · MA200대비 {reg.get('gap_pct', 0):+.0f}% "
+             f"· 20일 {reg.get('mom20', 0):+.0f}%)")
+    msg = f"{head}\n\n👉 **지금은 이걸로 발굴: {mode}** — {why}"
+    {"success": st.success, "warning": st.warning, "info": st.info}.get(level, st.info)(msg)
+    st.caption("국면 기반 추천(참고) · 급락장은 어떤 발굴도 절대수익 마이너스 가능 · 검증 `autotrade/verify_regime.py`")
+
+
 def render_screener(
     load_stock_data,
     add_indicators,
@@ -118,9 +166,13 @@ def render_screener(
     reversion_score=None,
     momentum_score=None,
     get_fundamentals=None,
+    show_detail=None,
+    market_regime=None,
 ):
-    """종목 발굴 화면."""
+    """종목 발굴 화면. show_detail: 종목 클릭 시 풀 상세를 렌더할 콜백(code,name) — 없으면 축약."""
     st.title("🔭 종목 발굴")
+    if market_regime:
+        _render_regime_reco(market_regime)
     st.caption(
         "KOSPI 200 + KOSDAQ 150 약 350개 종목 중 매수 신호가 강한 종목을 찾습니다. "
         "첫 스캔은 2-4분 정도 걸려요."
@@ -142,12 +194,42 @@ def render_screener(
                       "최근 상승률·가속·신고가 근접·거래량이 강한 종목"))
     modes.append(("⚖️ 종합(구)", lambda df: score_signal(df),
                   "이평·크로스·RSI·볼린저·거래량 5개 종합(기존 기준)"))
+    # 📥 매집: 가격점수가 아닌 키움 투자자별 수급 기반 → 전용 렌더로 분기(mode_fn 없음)
+    modes.append(("📥 조용한 매집", None,
+                  "사모·기관이 조용히 사모으고 개미는 빠진 종목(키움 수급). 참고용 워치리스트."))
+    # 🚨 실시간 급등: 키움 등락률상위 → 모니터링 전용(매수신호 아님, 백테스트상 기대값 음)
+    modes.append(("🚨 실시간 급등", None,
+                  "오늘 15%↑ + 체결강도·거래량 강한 종목(키움 실시간). ⚠️모니터링 전용."))
 
     mode_map = {m[0]: (m[1], m[2]) for m in modes}
     sel_mode = st.radio("발굴 기준", list(mode_map.keys()), horizontal=True,
                         key="screen_mode",
                         help="기준마다 '강한 종목'의 정의가 달라집니다. 추세=오르는 중, "
-                             "반등=많이 빠진 것, 모멘텀=최근 강하게 오르는 것.")
+                             "반등=많이 빠진 것, 모멘텀=최근 강하게 오르는 것, "
+                             "매집=사모·기관이 조용히 모으는 것(수급).")
+
+    # 매집은 가격 채점이 아니라 수급 스캔 → 완전히 다른 화면
+    if sel_mode.startswith("📥"):
+        st.caption(f"📌 **{sel_mode}** — {mode_map[sel_mode][1]}")
+        _render_accumulation(
+            load_stock_data=load_stock_data, add_indicators=add_indicators,
+            score_signal=score_signal, calc_stop_levels=calc_stop_levels,
+            make_chart=make_chart,
+        )
+        # 매집에서 담은 관심종목을 이 화면 하단에도 바로 표시 (목록은 저장정보만 → 가벼움)
+        st.markdown("---")
+        _render_watchlist(
+            load_watchlist(), save_watchlist,
+            load_stock_data, add_indicators, score_signal, calc_stop_levels, make_chart,
+            show_detail=show_detail,
+        )
+        return
+
+    # 실시간 급등: 키움 등락률상위 → 모니터링 전용 화면
+    if sel_mode.startswith("🚨"):
+        _render_surge_monitor()
+        return
+
     mode_fn, mode_desc = mode_map[sel_mode]
     st.caption(f"📌 **{sel_mode}** — {mode_desc}")
 
@@ -293,7 +375,7 @@ def render_screener(
         _render_result_table(strong, watchlist, watchlist_codes, save_watchlist, prefix="s",
                              load_stock_data=load_stock_data, add_indicators=add_indicators,
                              score_signal=score_signal, calc_stop_levels=calc_stop_levels,
-                             make_chart=make_chart)
+                             make_chart=make_chart, show_detail=show_detail)
 
     # 매수 관심 섹션
     if interest:
@@ -303,7 +385,7 @@ def render_screener(
         _render_result_table(interest, watchlist, watchlist_codes, save_watchlist, prefix="i",
                              load_stock_data=load_stock_data, add_indicators=add_indicators,
                              score_signal=score_signal, calc_stop_levels=calc_stop_levels,
-                             make_chart=make_chart)
+                             make_chart=make_chart, show_detail=show_detail)
 
     # 워치리스트 표시
     st.markdown("---")
@@ -311,12 +393,346 @@ def render_screener(
         watchlist, save_watchlist,
         load_stock_data, add_indicators, score_signal,
         calc_stop_levels, make_chart,
+        show_detail=show_detail,
     )
+
+
+# ===== 📥 조용한 매집 (키움 수급) =====
+@st.cache_data(ttl=60, show_spinner=False)
+def _fetch_surge(min_rate: float, min_cs: float, min_vol: int) -> list:
+    """키움 등락률상위(ka10027) → 등락률 min_rate↑ + 체결강도·거래량 조건 필터. 60초 캐시.
+    키움 미연결(클라우드)이면 예외 → 호출측이 안내. 반환: dict 리스트(체결강도·거래량순)."""
+    _autotrade_path()
+    from kiwoom_api import from_secrets
+    api = from_secrets()
+    body = {"mrkt_tp": "000", "sort_tp": "1", "trde_qty_cnd": "0000", "stk_cnd": "0",
+            "crd_cnd": "0", "updown_incls": "1", "pric_cnd": "0", "trde_prica_cnd": "0",
+            "stex_tp": "1"}
+    r = api._post("/api/dostk/rkinfo", "ka10027", body)
+    out = []
+    for x in r.get("pred_pre_flu_rt_upper", []):
+        try:
+            rate, cs, vol = float(x["flu_rt"]), float(x["cntr_str"]), int(x["now_trde_qty"])
+        except Exception:
+            continue
+        if abs(rate) >= min_rate and cs >= min_cs and vol >= min_vol:
+            out.append({"code": x["stk_cd"], "name": x["stk_nm"], "rate": rate,
+                        "price": str(x["cur_prc"]).lstrip("+"), "cs": cs, "vol": vol})
+    out.sort(key=lambda d: (d["cs"], d["vol"]), reverse=True)
+    return out
+
+
+_SURGE_THEMES = [
+    ("이차전지", ["이차전지", "2차전지", "배터리", "양극", "음극", "전지", "리튬", "전해"]),
+    ("반도체", ["반도체", "웨이퍼", "HBM", "패키지", "후공정", "소부장", "파운드리"]),
+    ("AI·데이터", ["AI", "인공지능", "데이터", "클라우드", "머신러닝"]),
+    ("바이오·제약", ["바이오", "제약", "의약", "진단", "치료", "신약", "백신", "항체", "세포"]),
+    ("방산·우주항공", ["방산", "우주", "항공", "무기", "위성", "방위"]),
+    ("조선·해양", ["조선", "해양", "선박", "플랜트", "기자재"]),
+    ("로봇", ["로봇", "협동로봇", "자동화"]),
+    ("원자력·에너지", ["원자력", "원전", "발전", "태양광", "풍력", "에너지", "전력", "수소", "열병합"]),
+    ("화학·소재", ["화학", "소재", "필름", "화학물질"]),
+    ("자동차", ["자동차", "차량", "전장", "타이어"]),
+    ("엔터·콘텐츠", ["엔터", "미디어", "콘텐츠", "드라마", "음원", "게임", "웹툰"]),
+    ("소비재", ["화장품", "뷰티", "의류", "패션", "식품", "음료"]),
+    ("건설·부동산", ["건설", "건축", "토목", "부동산", "주택"]),
+]
+
+
+def _surge_common(rows: list) -> str:
+    """급등 리스트 한 줄 브리핑: 주도 섹터 + 평균등락 + 상한가 + 매수세 흐름."""
+    from collections import Counter
+    cnt = Counter()
+    for d in rows:
+        text = stock_desc(d["code"], 40) + " " + d["name"]
+        for theme, kws in _SURGE_THEMES:
+            if any(k in text for k in kws):
+                cnt[theme] += 1
+                break
+    n = len(rows) or 1
+    avg_cs = sum(d["cs"] for d in rows) / n
+    avg_rate = sum(d["rate"] for d in rows) / n
+    limit_up = sum(1 for d in rows if d["rate"] >= 29.5)
+    # 주도 섹터
+    if cnt:
+        theme, c = cnt.most_common(1)[0]
+        if c >= 2 and c / n >= 0.25:
+            sec = f"**{theme}** 섹터 주도 ({c}/{n}종목)"
+        else:
+            sec = "테마 분산 (" + " · ".join(f"{t} {v}" for t, v in cnt.most_common(3)) + ")"
+    else:
+        sec = "공통 테마 없음 (개별 이슈)"
+    # 매수세 흐름(체결강도)
+    if avg_cs >= 100:
+        flow = "매수세 강함 · 흐름 살아있음"
+    elif avg_cs >= 80:
+        flow = "매수세 보통"
+    else:
+        flow = "매수세 식는 중 · 추격 주의"
+    lu = f" · 상한가 {limit_up}종목" if limit_up else ""
+    return (f"🔎 **오늘 급등 요약**: {sec} · 평균 +{avg_rate:.0f}%{lu} · "
+            f"{flow}(체결강도 {avg_cs:.0f})")
+
+
+def _render_surge_monitor():
+    """실시간 급등주 모니터링(키움 등락률상위). ⚠️ 매수신호 아님 — 백테스트상 기대값 음(−)."""
+    st.caption("📌 **🚨 실시간 급등** — 오늘 15%↑ + 체결강도·거래량 강한 종목 (키움 실시간)")
+    st.error(
+        "⚠️ **모니터링 전용 · 매수 신호 아님.** 소형주 25,360표본 백테스트상 '급등 낌새'로 "
+        "매수 시 이후 20일 기대값 **음(−4~−6%)** 확인됨. 급등을 더 잡을수록 폭락도 더 잡혀 "
+        "기대값이 악화됩니다. **'오늘 뭐가 터졌나' 참고용으로만** 보세요."
+    )
+    c1, c2, c3 = st.columns(3)
+    min_rate = c1.slider("최소 등락률(%)", 10, 30, 15, key="surge_rate")
+    min_cs = c2.slider("최소 체결강도", 50, 150, 85, key="surge_cs",
+                       help="100↑=매수세 우위. 세력 개입 흔적")
+    min_vol = c3.slider("최소 거래량(만주)", 0, 200, 50, key="surge_vol") * 10000
+    if st.button("🔄 새로고침", key="surge_refresh"):
+        _fetch_surge.clear()
+    try:
+        rows = _fetch_surge(float(min_rate), float(min_cs), int(min_vol))
+    except Exception:
+        st.warning("키움 미연결 — 실시간 급등은 **로컬(키움 설정)에서만** 조회됩니다. (클라우드 미지원)")
+        return
+    if not rows:
+        st.info("조건을 충족한 급등 종목이 없습니다. (등락률 순위는 **장중**에만 값이 있어요)")
+        return
+    st.caption(f"총 {len(rows)}종목 · 체결강도·거래량순 · 60초 캐시 (새로고침으로 갱신)")
+    tbl = ["| 종목 | 등락률 | 현재가 | 체결강도 | 거래량(만) |", "|---|---|---|---|---|"]
+    for d in rows:
+        nm = f"**{d['name']}**{desc_html(d['code'], 20)}"
+        tbl.append(f"| {nm} | +{d['rate']:.1f}% | {d['price']} | {d['cs']:.0f} | {d['vol']//10000:,} |")
+    st.markdown("\n".join(tbl), unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown(_surge_common(rows), unsafe_allow_html=True)
+
+
+def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal=None,
+                         calc_stop_levels=None, make_chart=None):
+    """키움 투자자별 수급으로 사모·기관 '조용한 매집' 종목 발굴 (대형/중형 강도순). 참고용."""
+    st.caption(
+        "키움 투자자별 수급(ka10059)으로 **'조용한 매집'**(사모·기관 지속 순매수 + 개미 이탈) 종목을 "
+        "대형/중형으로 나눠 **매집 강도순**으로 뽑습니다. "
+        "⚠️ 백테스트상 지수를 이기진 못해 **자금배분용이 아닌 참고용(워치리스트)**입니다."
+    )
+
+    # 키움 모듈 지연 로드 (클라우드엔 autotrade/secrets 없을 수 있음)
+    try:
+        _autotrade_path()
+        from accumulation import scan, TOP_N, LARGE_MAX, UNIV_RANK
+        from kiwoom_api import from_secrets
+    except Exception as e:
+        st.warning(f"매집 모듈을 불러오지 못했습니다: {e}")
+        return
+    try:
+        api = from_secrets()
+    except Exception as e:
+        st.warning(
+            "키움 API 설정이 없어 매집 스캔을 할 수 없습니다. 로컬 `.streamlit/secrets.toml`의 "
+            "`[kiwoom]`에 appkey/secretkey가 필요합니다(모의투자).\n\n"
+            f"({e})"
+        )
+        return
+
+    c1, c2 = st.columns([3, 1.4])
+    c1.caption(
+        f"유니버스: 시총 상위 {UNIV_RANK}종목 · "
+        f"대형(1~{LARGE_MAX}위)/중형({LARGE_MAX+1}~{UNIV_RANK}위) 각 TOP{TOP_N}"
+    )
+    scan_btn = c2.button("🔍 매집 스캔 (1~2분)", type="primary", use_container_width=True)
+
+    if "accum_time" not in st.session_state:
+        st.session_state.accum_large = None
+        st.session_state.accum_mid = None
+        st.session_state.accum_time = None
+
+    if scan_btn:
+        pbar = st.progress(0.0, text="시세 프리필터 준비...")
+
+        def cb(phase, done, total):
+            frac = done / max(total, 1)
+            if phase == "prefilter":
+                pbar.progress(min(frac * 0.4, 0.4), text=f"시세 프리필터 {done}/{total}")
+            else:
+                pbar.progress(0.4 + min(frac * 0.6, 0.6), text=f"키움 수급 확인 {done}/{total}")
+
+        try:
+            api._ensure_token()
+            large, mid = scan(api, progress=cb)
+        except Exception as e:
+            pbar.empty()
+            st.error(f"매집 스캔 실패: {e}")
+            return
+        pbar.empty()
+        st.session_state.accum_large = large
+        st.session_state.accum_mid = mid
+        st.session_state.accum_time = datetime.now()
+        st.rerun()
+
+    if st.session_state.accum_time:
+        ago = (datetime.now() - st.session_state.accum_time).total_seconds() / 60
+        st.caption(f"마지막 매집 스캔: {st.session_state.accum_time.strftime('%H:%M')} ({int(ago)}분 전)")
+
+    large = st.session_state.accum_large
+    mid = st.session_state.accum_mid
+    if large is None:
+        st.info("위 '🔍 매집 스캔' 버튼을 눌러 조용한 매집 종목을 찾아보세요. (첫 스캔 1~2분)")
+        return
+
+    st.markdown("---")
+    with st.expander("ℹ️ 지표 읽는 법 (처음이면 펼쳐보세요)"):
+        st.markdown(
+            "- **🔥 강도**: 하루 거래량의 며칠치를 스마트머니가 쓸어담았나. **높을수록 강한 매집**.\n"
+            "- **🏛️ 매집 주체**: 사모·금융투자·투신·기관 중 20일 지속 순매수한 곳. **많을수록 광범위**.\n"
+            "- **📈 타이밍**: 20일 수익률. **아직 안 오른(🔵) 게 좋음** — 이미 오른(🔴) 건 매집 후반.\n"
+            "- **🟢 안정도(변동성)**: 일간 변동성. **낮을수록 기복 적어 보유 편함**. "
+            "검증상 저변동 매집주가 이후 낙폭 얕고 수익 우위(변동성↔낙폭 상관 -0.68), "
+            "고변동(>6%)은 손실+깊은낙폭이라 **목록에서 자동 제외**.\n"
+            "- **체결강도**: 실시간 매수세(누적 매수/매도 체결량). **120↑=강한 매집 진행 확인** · "
+            "100↓=매수세 약함. *장중에만 유효(마감 후엔 당일 최종값).*\n"
+            "- **개미 이탈**: 개인이 순매도(빠짐) = 조용한 매집의 좋은 신호(목록 전체가 이 조건 충족).\n"
+            "- **🚦 국면(최근 흐름)**: 🟢상승초입(세력매수+개미유입) · 🟢매집지속(세력매수·개미소외) · "
+            "🔴이탈주의(세력 최근 멈춤). *백테스트 검증(강세장 기준), 하락장 미검증.*\n"
+            "- ⚠️ 매수신호가 아니라 **관심 후보**입니다. 진입은 차트·추세/반등 신호를 따로 확인한 뒤에."
+        )
+    watchlist = load_watchlist()
+    watchlist_codes = {w["code"] for w in watchlist}
+    _render_accum_section("🏛️ 대형주 매집", large, watchlist, watchlist_codes, "L",
+                          "광범위 기관매집(사모+금융투자+투신+기관) 유효 · 검증 사모 +5.4%p")
+    st.markdown("")
+    _render_accum_section("🏗️ 중형주 매집", mid, watchlist, watchlist_codes, "M",
+                          "사모 주력(+4.3%p) · 외국인 지속매수는 역신호라 제외")
+
+
+def _accum_stage(days):
+    """매집 지속일수(N일째) → 단계 배지. 근거: 라이프사이클 백테스트(accumulate_lifecycle.py)
+    강세장 279이벤트 = 매집 진입 후 중앙 7일째·+8%에서 고점, 8일째 세력이탈(후행)."""
+    if not days:
+        return None
+    if days <= 3:
+        return f"🟢 매집 {days}일째 (초기) — 검증상 고점(중앙 7일)까지 여유"
+    if days <= 7:
+        return f"🟡 매집 {days}일째 (중반) — 검증상 고점 임박(중앙 7일·+8%)"
+    return f"🔴 매집 {days}일째 (후반) — 검증상 고점(중앙 7일) 경과, 세력이탈·차익 주의"
+
+
+def _accum_badges(f):
+    """종목 지표를 직관 배지(강도🔥 · 매집주체🏛️ · 타이밍🔵)로 변환."""
+    inten = f["intensity"]
+    if inten >= 5:
+        fire = "🔥🔥🔥 매우 강함"
+    elif inten >= 2:
+        fire = "🔥🔥 강함"
+    else:
+        fire = "🔥 보통"
+    n = len(f["smart"])
+    if f["score"] >= 9:
+        org = f"🏛️ 기관 총동원 ({n}곳)"
+    elif f["score"] >= 7:
+        org = f"🏛️ 기관 다수 ({n}곳)"
+    else:
+        org = f"🏛️ 사모 주도 ({n}곳)"
+    r = f["ret20"]
+    if r <= 3:
+        timing = f"🔵 아직 초입 ({r:+.1f}%)"
+    elif r <= 10:
+        timing = f"🟡 상승 진행 ({r:+.1f}%)"
+    else:
+        timing = f"🔴 이미 상승 ({r:+.1f}%)"
+    return fire, org, timing
+
+
+def _accum_phase(f):
+    """최근 절반(뒤 10일) 흐름으로 매집 국면 판정. 옛 결과(시점 필드 없음)면 None.
+    ⚠️ 방향은 백테스트(validate_recent_flow.py, 키움 100일=강세장)로 검증:
+       · 세력 최근이탈(recent_smart≤0) → 이후 20일 중앙값 −3.8%·승률 41%(피해야)
+       · 세력매수+개미복귀(recent_ind>0) → 중앙값 +6.3%·승률 58%(가장 강함)
+       · 세력매수+개미소외 → 중앙값 +0.5%(평범·안전)
+       (개미복귀가 좋은 건 강세장 특성일 수 있음 — 하락장 미검증)"""
+    if "recent_smart" not in f:
+        return None
+    rs, ri = f["recent_smart"], f["recent_ind"]
+    if rs <= 0:
+        return ":red[**🔴 이탈 주의**]", "최근 세력이 순매수를 멈췄거나 이탈 — 검증상 이후 손실 확률↑"
+    if ri > 0:
+        return ":green[**🟢 상승 초입**]", "세력 매수 지속 + 개미 유입 시작 — 검증상 가장 강한 국면(강세장 기준)"
+    return ":green[**🟢 매집 지속**]", "세력이 최근에도 순매수 · 개미는 아직 소외(안전한 매집 진행)"
+
+
+def _accum_stability(f) -> str:
+    """진입시점 일간 변동성 → 안정도 배지. 검증(accumulate_volatility.py, 매집 356건):
+    저변동일수록 이후 낙폭 얕고 수익 우위(변동성↔낙폭 상관 -0.68). 고변동(>6%)은 스캔서 이미 제외."""
+    vol = f.get("vol")
+    if vol is None:
+        return ""
+    if vol <= 3.5:
+        return f"🟢 안정적 (일변동 {vol:.1f}% · 기복 적어 보유 편함)"
+    if vol <= 5.0:
+        return f"🟡 변동 보통 (일변동 {vol:.1f}%)"
+    return f"🟠 변동 다소 큼 (일변동 {vol:.1f}% · 기복 주의)"
+
+
+def _accum_cntr_str(f) -> str:
+    """실시간 체결강도(매수세) → 매집 확인 배지. 100↑=매수우위, 120↑=강한 매집 진행중.
+    ⚠️ 장중에만 유효(마감 후엔 당일 최종값), 조회 실패/미개장이면 표시 생략."""
+    cs = f.get("cntr_str")
+    if not cs:
+        return ""
+    if cs >= 120:
+        return f"🟢 체결강도 {cs:.0f} (매수세 우위 · 매집 진행 확인)"
+    if cs >= 100:
+        return f"🟡 체결강도 {cs:.0f} (매수세 약우위)"
+    return f"⚪ 체결강도 {cs:.0f} (매수세 약함 · 매집 식는 중일 수 있음)"
+
+
+def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note):
+    """매집 결과 한 섹션(대형/중형): 종목별 카드 + 직관 배지 + 관심종목 추가."""
+    st.markdown(f"### {title} ({len(rows)}개)")
+    st.caption(note)
+    if not rows:
+        st.info("조건을 충족한 종목이 없습니다.")
+        return
+    for i, f in enumerate(rows):
+        fire, org, timing = _accum_badges(f)
+        phase = _accum_phase(f)
+        with st.container(border=True):
+            top = st.columns([3.4, 1.3])
+            top[0].markdown(f"**{i+1}. {f['name']}**　`{f['code']}` · 시총 {f['rank']}위{desc_html(f['code'])}",
+                            unsafe_allow_html=True)
+            if phase:
+                top[0].markdown(phase[0])
+                top[0].caption(phase[1])
+            _stage = _accum_stage(f.get("accum_days"))
+            if _stage:
+                top[0].markdown(_stage)
+            if f["code"] in watchlist_codes:
+                top[1].markdown("✓ 담김")
+            elif top[1].button("➕ 관심추가", key=f"accum_add_{prefix}_{i}",
+                               use_container_width=True):
+                watchlist.append({
+                    "code": f["code"],
+                    "name": f["name"],
+                    "added_at": datetime.now().isoformat(),
+                    "note": f"매집 강도 {f['intensity']:.1f}d·점수 {f['score']}",
+                })
+                save_watchlist(watchlist)
+                st.rerun()
+            b = st.columns(3)
+            b[0].markdown(fire)
+            b[0].caption(f"강도 {f['intensity']:.1f}일치")
+            b[1].markdown(org)
+            b[1].caption("·".join(f["smart"]))
+            b[2].markdown(timing)
+            b[2].caption(f"개미 {f['ind']/1e4:+,.0f}만주 이탈")
+            # 안정도(변동성)·체결강도(매수세) — 사용자 실전피드백 반영(저변동+체결강도로 매집 확인)
+            extra = [x for x in (_accum_stability(f), _accum_cntr_str(f)) if x]
+            if extra:
+                st.markdown("　".join(extra))
 
 
 def _render_result_table(results, watchlist, watchlist_codes, save_fn, prefix="",
                          load_stock_data=None, add_indicators=None, score_signal=None,
-                         calc_stop_levels=None, make_chart=None):
+                         calc_stop_levels=None, make_chart=None, show_detail=None):
     """발굴 결과 테이블. 종목명 클릭 시 그 행 바로 아래에 상세를 아코디언처럼 펼침."""
     # 헤더
     COL_RATIOS = [3, 3, 1.5, 2, 1.2, 1.5]
@@ -341,6 +757,9 @@ def _render_result_table(results, watchlist, watchlist_codes, save_fn, prefix=""
                 st.session_state.sc_selected_code = r["code"]
                 st.session_state.sc_selected_name = r["name"]
             st.rerun()
+        _d = stock_desc(r["code"])
+        if _d:
+            cols[0].caption(_d)
         # 재무 건전성 배지+이유(반등 모드에서만 존재)
         _h = r.get("health")
         if _h:
@@ -370,12 +789,17 @@ def _render_result_table(results, watchlist, watchlist_codes, save_fn, prefix=""
             def _close_sc():
                 st.session_state.sc_selected_code = None
             with st.container(border=True):
-                _render_stock_detail(
-                    r["code"], r["name"],
-                    load_stock_data, add_indicators, score_signal,
-                    calc_stop_levels, make_chart,
-                    close_cb=_close_sc, key_suffix=f"sc_{prefix}_{i}",
-                )
+                if show_detail:   # 단일분석과 동일한 풀 상세
+                    if st.button("✕ 닫기", key=f"close_sc_{prefix}_{i}", use_container_width=True):
+                        _close_sc(); st.rerun()
+                    show_detail(r["code"], r["name"])
+                else:
+                    _render_stock_detail(
+                        r["code"], r["name"],
+                        load_stock_data, add_indicators, score_signal,
+                        calc_stop_levels, make_chart,
+                        close_cb=_close_sc, key_suffix=f"sc_{prefix}_{i}",
+                    )
 
 
 def _render_stock_detail(code, name, load_stock_data, add_indicators, score_signal,
@@ -450,9 +874,9 @@ def _render_stock_detail(code, name, load_stock_data, add_indicators, score_sign
 def _render_watchlist(
     watchlist, save_fn,
     load_stock_data=None, add_indicators=None, score_signal=None,
-    calc_stop_levels=None, make_chart=None,
+    calc_stop_levels=None, make_chart=None, show_detail=None,
 ):
-    """관심종목 (워치리스트) 표시 + 클릭 상세 분석."""
+    """관심종목 (워치리스트) 표시 + 클릭 상세 분석. show_detail 있으면 풀 상세 콜백 사용."""
     st.markdown(f"### 💾 관심종목 ({len(watchlist)}개)")
     if not watchlist:
         st.caption("발굴된 종목 옆 '➕ 추가' 버튼으로 관심종목을 모을 수 있어요.")
@@ -484,6 +908,9 @@ def _render_watchlist(
                 st.session_state.wl_selected_code = w["code"]
                 st.session_state.wl_selected_name = w.get("name", w["code"])
             st.rerun()
+        _dw = stock_desc(w["code"])
+        if _dw:
+            cols[0].caption(_dw)
 
         try:
             added = datetime.fromisoformat(w.get("added_at", "")).strftime("%m/%d %H:%M")
@@ -515,10 +942,15 @@ def _render_watchlist(
     def _close_wl():
         st.session_state.wl_selected_code = None
 
-    _render_stock_detail(
-        selected_code, selected_name,
-        load_stock_data, add_indicators, score_signal,
-        calc_stop_levels, make_chart,
-        score_at_add=selected_w.get("score_at_add"),
-        close_cb=_close_wl, key_suffix=f"wl_{selected_code}",
-    )
+    if show_detail:   # 단일분석과 동일한 풀 상세
+        if st.button("✕ 닫기", key=f"close_wl_{selected_code}", use_container_width=True):
+            _close_wl(); st.rerun()
+        show_detail(selected_code, selected_name)
+    else:
+        _render_stock_detail(
+            selected_code, selected_name,
+            load_stock_data, add_indicators, score_signal,
+            calc_stop_levels, make_chart,
+            score_at_add=selected_w.get("score_at_add"),
+            close_cb=_close_wl, key_suffix=f"wl_{selected_code}",
+        )
