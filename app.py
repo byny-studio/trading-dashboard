@@ -2748,6 +2748,7 @@ elif mode == "📒 모의매수":
                 _buys = r.get("buys", 1)
                 cols[1].caption("평단 × 수량" + (f" · {_buys}회 누적" if _buys > 1 else ""))
                 cols[1].write(f"{r['buy_price']:,} × {r['quantity']}")
+                cols[1].caption(f"= 총 {r['cost']:,}원 매입")
                 if cols[1].button("➕10주", key=f"sim_add10_{i}",
                                   help="현재가로 10주 추가(물타기 — 평단 재계산, 평가손익% 반영)"):
                     _cur = r.get("cur", 0)
@@ -2760,6 +2761,7 @@ elif mode == "📒 모의매수":
                         st.error("현재가를 가져오지 못했습니다.")
                 cols[2].caption(f"현재가 · 보유 {r['held']}일")
                 cols[2].write(f"{r['cur']:,}원")
+                cols[2].caption(f"= 평가 {r['val']:,}원")
                 cols[3].caption("평가손익")
                 cols[3].write(f"{r['pl']:+,}원 ({r['plpct']:+.1f}%)")
                 if r["bench"] is not None:
