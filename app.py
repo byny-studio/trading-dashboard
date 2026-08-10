@@ -2748,6 +2748,14 @@ elif mode == "📒 모의매수":
                 _buys = r.get("buys", 1)
                 cols[1].caption("평단 × 수량" + (f" · {_buys}회 누적" if _buys > 1 else ""))
                 cols[1].write(f"{r['buy_price']:,} × {r['quantity']}")
+                if cols[1].button("➕10주", key=f"sim_add10_{i}",
+                                  help="현재 평단가 그대로 10주 추가(평단 유지·수량만 증가)"):
+                    for _e in sim:
+                        if _e.get("code") == r["code"]:
+                            _e["quantity"] = (_e.get("quantity", 0) or 0) + 10
+                            _e["added_at"] = datetime.now().isoformat()
+                    save_sim(sim)
+                    st.rerun()
                 cols[2].caption(f"현재가 · 보유 {r['held']}일")
                 cols[2].write(f"{r['cur']:,}원")
                 cols[3].caption("평가손익")
