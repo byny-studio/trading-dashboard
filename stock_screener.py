@@ -518,6 +518,30 @@ def _render_surge_monitor():
     st.markdown(_surge_common(rows), unsafe_allow_html=True)
 
 
+_ACCUM_SORTS = {
+    "🔥 매집강도 높은순": (lambda x: x.get("intensity", 0), True),
+    "🟢 저변동순(기복 적은)": (lambda x: x.get("vol", 99), False),
+    "💪 체결강도 높은순": (lambda x: (x.get("cntr_str") or -1), True),
+    "🔵 덜 오른순(20일수익↓)": (lambda x: x.get("ret20", 0), False),
+    "🕐 매집 초기순(지속일↓)": (lambda x: x.get("accum_days", 0), False),
+    "📊 매집점수 높은순": (lambda x: x.get("score", 0), True),
+}
+
+
+def _apply_sort_filter(rows, sort_key, f_lowvol, f_cntr, f_notrisen):
+    """매집 결과에 정렬·필터 적용. 필터: 저변동(≤3.5%)·체결강도120↑·덜오른(20일≤10%)."""
+    out = list(rows)
+    if f_lowvol:
+        out = [x for x in out if x.get("vol") is not None and x["vol"] <= 3.5]
+    if f_cntr:
+        out = [x for x in out if (x.get("cntr_str") or 0) >= 120]
+    if f_notrisen:
+        out = [x for x in out if x.get("ret20", 0) <= 10]
+    kf, rev = _ACCUM_SORTS.get(sort_key, _ACCUM_SORTS["🔥 매집강도 높은순"])
+    out.sort(key=kf, reverse=rev)
+    return out
+
+
 def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal=None,
                          calc_stop_levels=None, make_chart=None, add_to_sim=None):
     """키움 투자자별 수급으로 사모·기관 '조용한 매집' 종목 발굴 (대형/중형 강도순). 참고용.
@@ -613,6 +637,22 @@ def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal
         )
     watchlist = load_watchlist()
     watchlist_codes = {w["code"] for w in watchlist}
+
+    # ----- 🔎 정렬 · 필터 (대형/중형 공통 적용) -----
+    sc1, sc2 = st.columns([2, 3])
+    sort_key = sc1.selectbox("정렬", list(_ACCUM_SORTS.keys()), key="accum_sort")
+    with sc2:
+        st.caption("필터")
+        fc = st.columns(3)
+        f_lowvol = fc[0].checkbox("🟢 저변동만", key="accum_f_lowvol",
+                                  help="일간 변동성 ≤3.5% (기복 적은 것만)")
+        f_cntr = fc[1].checkbox("💪 체결강도120↑", key="accum_f_cntr",
+                                help="매수세 강한 것만(장중값). 마감 후·조회실패면 제외될 수 있음")
+        f_notrisen = fc[2].checkbox("🔵 덜오른것만", key="accum_f_notrisen",
+                                    help="20일 수익률 ≤10% (매집 초기 타이밍)")
+    large = _apply_sort_filter(large, sort_key, f_lowvol, f_cntr, f_notrisen)
+    mid = _apply_sort_filter(mid, sort_key, f_lowvol, f_cntr, f_notrisen)
+
     sim_qty = 10
     if add_to_sim:
         sim_qty = int(st.number_input(
