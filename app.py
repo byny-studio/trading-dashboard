@@ -2773,6 +2773,35 @@ elif mode == "📒 모의매수":
                 if sel:
                     _sim_detail(r["code"], r.get("name", ""))
 
+        # ----- 📋 간단 리포트 (최하단) -----
+        st.markdown("---")
+        st.markdown("### 📋 간단 리포트")
+        n = len(rows)
+        wins = [x for x in rows if x["pl"] > 0]
+        losses = [x for x in rows if x["pl"] < 0]
+        beat = [x for x in rows if x["bench"] is not None and x["plpct"] > x["bench"]]
+        best = max(rows, key=lambda x: x["plpct"])
+        worst = min(rows, key=lambda x: x["plpct"])
+        avg_held = sum(x["held"] for x in rows) / n
+        if alpha > 0:
+            verdict = "🟢 **지수 초과 중** — 발굴+매수가 KODEX200보다 나음"
+        elif alpha < 0:
+            verdict = "🔴 **지수 하회 중** — 지수(KODEX200)를 못 이기는 중"
+        else:
+            verdict = "⚖️ 지수와 비슷"
+        st.markdown("\n".join([
+            f"- **{n}종목** · 총 투자 {tot_cost:,}원 → 평가 {tot_val:,}원 · "
+            f"손익 **{tot_pl:+,}원 ({tot_plpct:+.1f}%)**",
+            f"- **지수(KODEX200) 대비 {alpha:+.1f}%p** (내 {tot_plpct:+.1f}% vs 지수 {bench_pct:+.1f}%) — {verdict}",
+            f"- 수익 {len(wins)} · 손실 {len(losses)} (승률 {len(wins)/n*100:.0f}%) · "
+            f"지수 초과 {len(beat)}/{n}종목",
+            f"- 🏆 베스트: **{best['name']}** {best['plpct']:+.1f}% · "
+            f"🥶 워스트: **{worst['name']}** {worst['plpct']:+.1f}%",
+            f"- 평균 보유 {avg_held:.0f}일",
+        ]))
+        st.caption("⚠️ 모의(가상) 결과 · 국면(강세/약세)에 따라 달라짐 · 검증 목적의 참고 지표. "
+                   "핵심은 '지수 대비' — 발굴+매수가 지수를 꾸준히 이기는지 시간 두고 확인.")
+
 else:  # 포트폴리오 관리
     st.title("📋 포트폴리오 관리")
     portfolio = load_portfolio()
