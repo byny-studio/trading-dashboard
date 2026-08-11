@@ -6,6 +6,7 @@ portfolio.json
 history.json
 watchlist.json
 sim_portfolio.json
+starred.json
 
 # 🤖 자동매매 코드·로그(전략·계좌 활동) — 공개 저장소에 노출 금지
 autotrade/

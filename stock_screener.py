@@ -71,6 +71,32 @@ def save_watchlist(items: list) -> None:
         json.dump(items, f, ensure_ascii=False, indent=2)
 
 
+# ===== ⭐ 별표 (보기용 즐겨찾기 — 관리 없이 눈에 띄게 표시만) =====
+STARRED_FILE = "starred.json"
+
+
+def load_starred() -> set:
+    if os.path.exists(STARRED_FILE):
+        try:
+            with open(STARRED_FILE, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+
+def save_starred(codes) -> None:
+    with open(STARRED_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(codes), f, ensure_ascii=False, indent=2)
+
+
+def toggle_starred(code: str) -> set:
+    s = load_starred()
+    s.discard(code) if code in s else s.add(code)
+    save_starred(s)
+    return s
+
+
 # ===== 종목 풀 (KOSPI 200 + KOSDAQ 150) =====
 @st.cache_data(ttl=86400)  # 하루 캐시 (인덱스 구성종목은 잘 안 바뀜)
 def get_screening_universe() -> list:
@@ -637,21 +663,27 @@ def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal
         )
     watchlist = load_watchlist()
     watchlist_codes = {w["code"] for w in watchlist}
+    starred = load_starred()
 
     # ----- 🔎 정렬 · 필터 (대형/중형 공통 적용) -----
     sc1, sc2 = st.columns([2, 3])
     sort_key = sc1.selectbox("정렬", list(_ACCUM_SORTS.keys()), key="accum_sort")
     with sc2:
         st.caption("필터")
-        fc = st.columns(3)
+        fc = st.columns(4)
         f_lowvol = fc[0].checkbox("🟢 저변동만", key="accum_f_lowvol",
                                   help="일간 변동성 ≤3.5% (기복 적은 것만)")
         f_cntr = fc[1].checkbox("💪 체결강도120↑", key="accum_f_cntr",
                                 help="매수세 강한 것만(장중값). 마감 후·조회실패면 제외될 수 있음")
         f_notrisen = fc[2].checkbox("🔵 덜오른것만", key="accum_f_notrisen",
                                     help="20일 수익률 ≤10% (매집 초기 타이밍)")
+        f_star = fc[3].checkbox("⭐ 별표만", key="accum_f_star",
+                                help="별표(⭐) 표시한 종목만 보기")
     large = _apply_sort_filter(large, sort_key, f_lowvol, f_cntr, f_notrisen)
     mid = _apply_sort_filter(mid, sort_key, f_lowvol, f_cntr, f_notrisen)
+    if f_star:
+        large = [x for x in large if x["code"] in starred]
+        mid = [x for x in mid if x["code"] in starred]
 
     sim_qty = 10
     if add_to_sim:
@@ -661,11 +693,11 @@ def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal
                  "📒 모의매수 메뉴에서 지수(KODEX200) 대비 성과를 추적하세요."))
     _render_accum_section("🏛️ 대형주 매집", large, watchlist, watchlist_codes, "L",
                           "광범위 기관매집(사모+금융투자+투신+기관) 유효 · 검증 사모 +5.4%p",
-                          add_to_sim=add_to_sim, sim_qty=sim_qty)
+                          add_to_sim=add_to_sim, sim_qty=sim_qty, starred=starred)
     st.markdown("")
     _render_accum_section("🏗️ 중형주 매집", mid, watchlist, watchlist_codes, "M",
                           "사모 주력(+4.3%p) · 외국인 지속매수는 역신호라 제외",
-                          add_to_sim=add_to_sim, sim_qty=sim_qty)
+                          add_to_sim=add_to_sim, sim_qty=sim_qty, starred=starred)
 
 
 def _accum_stage(days):
@@ -750,9 +782,11 @@ def _accum_cntr_str(f) -> str:
 
 
 def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note,
-                          add_to_sim=None, sim_qty=10):
-    """매집 결과 한 섹션(대형/중형): 종목별 카드 + 직관 배지 + 관심종목/모의매수 추가.
-    add_to_sim(code,name,qty,price,note)->bool: 있으면 '📒 모의매수' 버튼 표시(price=0→오늘종가)."""
+                          add_to_sim=None, sim_qty=10, starred=None):
+    """매집 결과 한 섹션(대형/중형): 종목별 카드 + 직관 배지 + 관심종목/모의매수/별표.
+    add_to_sim(code,name,qty,price,note)->bool: 있으면 '📒 모의매수' 버튼 표시(price=0→오늘종가).
+    starred(set): 별표(⭐) 코드 집합 — 보기용 즐겨찾기 토글."""
+    starred = starred if starred is not None else set()
     st.markdown(f"### {title} ({len(rows)}개)")
     st.caption(note)
     if not rows:
@@ -762,8 +796,12 @@ def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note,
         fire, org, timing = _accum_badges(f)
         phase = _accum_phase(f)
         with st.container(border=True):
-            top = st.columns([3.0, 1.2, 1.4]) if add_to_sim else st.columns([3.4, 1.3])
-            top[0].markdown(f"**{i+1}. {f['name']}**　`{f['code']}` · 시총 {f['rank']}위{desc_html(f['code'])}",
+            if add_to_sim:
+                top = st.columns([2.6, 1.15, 1.35, 0.5])
+            else:
+                top = st.columns([3.0, 1.3, 0.5])
+            _star = "⭐ " if f["code"] in starred else ""
+            top[0].markdown(f"**{i+1}. {_star}{f['name']}**　`{f['code']}` · 시총 {f['rank']}위{desc_html(f['code'])}",
                             unsafe_allow_html=True)
             if phase:
                 top[0].markdown(phase[0])
@@ -794,6 +832,14 @@ def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note,
                         st.success(f"📒 {f['name']} {sim_qty}주 모의매수 담음 (📒 모의매수 메뉴에서 확인)")
                     else:
                         st.error("현재가를 가져오지 못해 담지 못했습니다.")
+            # ⭐ 별표 토글 (보기용 즐겨찾기)
+            _star_col = top[3] if add_to_sim else top[2]
+            _is_star = f["code"] in starred
+            if _star_col.button("⭐" if _is_star else "☆", key=f"accum_star_{prefix}_{i}",
+                                use_container_width=True,
+                                help="별표 해제" if _is_star else "별표(보기용 표시)"):
+                toggle_starred(f["code"])
+                st.rerun()
             b = st.columns(3)
             b[0].markdown(fire)
             b[0].caption(f"강도 {f['intensity']:.1f}일치")
