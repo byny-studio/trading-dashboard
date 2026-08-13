@@ -24,6 +24,7 @@ from signals import (  # noqa: F401
     add_indicators, score_signal, trend_score, reversion_score, momentum_score,
     dual_verdict, overheat_signal, position_action, _recent_cross, position_guide,
 )
+import bt_log
 from candle_analyzer import analyze_candle
 from theme_tracker import render_theme_tracker, leader_theme_map
 import us_market
@@ -2081,6 +2082,23 @@ elif mode == "📜 분석 기록":
 
 elif mode == "🧪 백테스트":
     st.title("🧪 백테스트")
+
+    # ----- 📚 매집·수급 검증 기록 -----
+    with st.expander("📚 매집·수급 검증 기록 (누적 백테스트 결과)", expanded=True):
+        _recs = bt_log.load()
+        if not _recs:
+            st.caption("아직 기록된 검증 결과가 없습니다. "
+                       "(autotrade 검증 스크립트 실행 시 자동 기록 · 로컬)")
+        else:
+            st.caption("매집·수급·체결강도 관련 백테스트/검증 결과 누적 기록 (최신순)")
+            for r in sorted(_recs, key=lambda x: x.get("date", ""), reverse=True):
+                st.markdown(f"**{r['title']}**　`{r.get('date','')}`")
+                if r.get("verdict"):
+                    st.markdown(f"　→ {r['verdict']}")
+                for ln in r.get("lines", []):
+                    st.caption(f"　· {ln}")
+    st.markdown("---")
+
     st.caption("매수/매도 임계점 30여 개 조합을 모두 시뮬해 가장 좋은 조합을 자동으로 찾아줍니다.")
 
     c1, c2 = st.columns([3, 1])

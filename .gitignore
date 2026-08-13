@@ -22,3 +22,6 @@ __pycache__/
 # 클라우드 Secrets 붙여넣기용(개인데이터 — 절대 커밋 금지)
 _cloud_secrets.txt
 cloud_sync.py
+
+# 백테스트 검증 기록(로컬 데이터)
+backtest_log.json

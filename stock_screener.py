@@ -655,17 +655,23 @@ def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal
     sort_key = sc1.selectbox("정렬", list(_ACCUM_SORTS.keys()), key="accum_sort")
     with sc2:
         st.caption("필터")
-        fc = st.columns(4)
+        fc = st.columns(5)
         f_lowvol = fc[0].checkbox("🟢 저변동만", key="accum_f_lowvol",
                                   help="일간 변동성 ≤3.5% (기복 적은 것만)")
         f_cntr = fc[1].checkbox("💪 체결강도120↑", key="accum_f_cntr",
                                 help="매수세 강한 것만(장중값). 마감 후·조회실패면 제외될 수 있음")
         f_notrisen = fc[2].checkbox("🔵 덜오른것만", key="accum_f_notrisen",
                                     help="20일 수익률 ≤10% (매집 초기 타이밍)")
-        f_star = fc[3].checkbox("⭐ 별표만", key="accum_f_star",
+        f_uptick = fc[3].checkbox("🚀 상승초입만", key="accum_f_uptick",
+                                  help="세력 매수 지속 + 개미 복귀(최근10일) — 검증상 강세장 가장 강한 국면(+6.3%·승률58%)")
+        f_star = fc[4].checkbox("⭐ 별표만", key="accum_f_star",
                                 help="별표(⭐) 표시한 종목만 보기")
     large = _apply_sort_filter(large, sort_key, f_lowvol, f_cntr, f_notrisen)
     mid = _apply_sort_filter(mid, sort_key, f_lowvol, f_cntr, f_notrisen)
+    if f_uptick:   # 상승초입 = 세력 최근순매수(rs>0) + 개미 복귀(ri>0)
+        _up = lambda x: x.get("recent_smart", 0) > 0 and x.get("recent_ind", 0) > 0
+        large = [x for x in large if _up(x)]
+        mid = [x for x in mid if _up(x)]
     if f_star:
         large = [x for x in large if x["code"] in starred]
         mid = [x for x in mid if x["code"] in starred]
