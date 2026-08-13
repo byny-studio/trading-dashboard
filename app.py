@@ -2249,43 +2249,55 @@ def portfolio_signal_monitor(portfolio, horizon="short", check_accum=False):
         df = add_indicators(df)
         sigs = []
         cx = _recent_cross(df, fast_n, slow_n)
-        if cx:
-            when = "오늘" if cx[1] == 0 else f"{cx[1]}일 전"
-            if cx[0] == "golden":
-                sigs.append(("🟢 추세전환 골든크로스",
-                             f"{when} {fast_n}/{slow_n} 골든크로스 — 상승 전환 신호"))
-            else:
-                sigs.append(("🔴 추세전환 데드크로스",
-                             f"{when} {fast_n}/{slow_n} 데드크로스 — 하락 전환 신호"))
+        golden = bool(cx) and cx[0] == "golden"
+        dead = bool(cx) and cx[0] == "dead"
+        _when = ("오늘" if cx[1] == 0 else f"{cx[1]}일 전") if cx else ""
+        if golden:
+            sigs.append(("🟢 추세전환 골든크로스",
+                         f"{_when} {fast_n}/{slow_n} 골든크로스 — 상승 전환 신호"))
         oh = overheat_signal(df, horizon)
         if oh.get("level") == 2:
             sigs.append(("🔥 과열", oh.get("text", "과열 구간 — 차익 주의")))
-        if check_accum:
+
+        if not check_accum:
+            # 키움 없이 차트만 — 데드크로스 단독 표시
+            if dead:
+                sigs.append(("🔴 추세전환 데드크로스",
+                             f"{_when} {fast_n}/{slow_n} 데드크로스 — 하락 전환 신호"))
+        else:
+            # ----- 🚨 정리 타이밍: 3중 체크(세력신호 + 체결강도 + 차트) 등급화 -----
+            exit_hits = []
             kf = get_kiwoom_supply(code)
-            if kf:
-                ph = kf.get("phase")
-                weakening = bool(ph) and ph[1] == "이탈 주의"     # 세력 최근10일 순매도 전환
-                out = str(kf.get("headline", "")).startswith("🔴")  # 20일 세력 이탈
-                if weakening or out:
-                    # ⭐ 검증(accumulate_exit.py): 세력 최근 순매도 전환 = 가장 강한 정리 신호
-                    #    이후 20일 중앙 -8.4%·승률 27% (매집유지 -4.7%보다 -3.7%p 나쁨)
-                    sigs.append(("🚨 정리 타이밍",
-                                 "세력(스마트머니) 최근 순매도 전환 — 검증상 이후 20일 중앙 -8.4%·"
-                                 "승률 27%(매집유지 -4.7%보다 나쁨). 정리 고려."))
-                elif kf.get("accumulating"):
-                    txt = kf.get("headline", "매집 진행")
-                    if ph:
-                        txt += f" · {ph[0]} {ph[1]}"
-                    sigs.append(("🏛️ 매집 진행", txt))
-            # 체결강도(매수세) 약화·꺾임 — 실시간(장중) 경고
+            accumulating = bool(kf) and kf.get("accumulating")
+            # ① 세력 순매도 전환(검증) — '매집중이던 종목의 꺾임'(phase 이탈주의)만 인정.
+            #    일반 기관순매도 노이즈 제외해 검증(-8.4%) 신호에 충실.
+            ph = kf.get("phase") if kf else None
+            if ph and ph[1] == "이탈 주의":
+                exit_hits.append(("세력 순매도 전환", "검증 -8.4%·승률27%"))
+            # ② 체결강도(실시간·미검증) — 명확히 약함(<80) 또는 60분比 급락(꺾임)만
             cs = get_kiwoom_cntr_str(code)
             now = cs.get("now") if cs else None
             if now:
                 m60 = cs.get("m60") or now
-                if now < 100:
-                    sigs.append(("⚠️ 체결강도 약함", f"체결강도 {now:.0f} (<100 · 매수세 약)"))
-                elif m60 and now < m60 * 0.85:
-                    sigs.append(("⚠️ 체결강도 꺾임", f"60분 {m60:.0f} → 현재 {now:.0f} (매수세 식는 중)"))
+                if now < 80:
+                    exit_hits.append(("체결강도 약함", f"{now:.0f}<80"))
+                elif m60 and m60 >= 80 and now < m60 * 0.85:
+                    exit_hits.append(("체결강도 꺾임", f"60분{m60:.0f}→{now:.0f}"))
+            # ③ 데드크로스(차트)
+            if dead:
+                exit_hits.append(("데드크로스", "차트 하락전환"))
+            nhit = len(exit_hits)
+            if nhit >= 1:
+                grade = ("🔴 강한 정리 신호" if nhit >= 3 else
+                         "🟠 정리 주의" if nhit == 2 else "🟡 정리 관찰")
+                detail = " · ".join(f"{a}({b})" for a, b in exit_hits)
+                sigs.append((f"{grade} ({nhit}/3)", f"정리축 {nhit}/3 — {detail}"))
+            elif accumulating:
+                txt = kf.get("headline", "매집 진행")
+                ph = kf.get("phase")
+                if ph:
+                    txt += f" · {ph[0]} {ph[1]}"
+                sigs.append(("🏛️ 매집 진행", txt))
         if sigs:
             hits.append({"code": code, "name": it.get("name", code), "signals": sigs})
     return hits
@@ -2868,10 +2880,10 @@ else:  # 포트폴리오 관리
 
         # ----- 📡 신호 모니터 (추세 전환·매집이 잡힌 보유종목만) -----
         with st.expander("📡 신호 모니터 — 추세 전환·매집 변화가 잡힌 보유종목", expanded=True):
-            st.caption("보유종목을 훑어 **추세 전환(골든/데드크로스)·과열**을 자동 표시합니다(최근 3거래일 내). "
-                       "아래 체크 시 **🚨 정리 타이밍**(세력 최근 순매도 전환 — 검증상 이후 20일 -8.4%·승률 27%)과 "
-                       "**체결강도 꺾임**까지 경고합니다 — 키움 필요라 **로컬에서만**.")
-            check_accum = st.checkbox("🏛️ 매집 변화·정리 타이밍도 확인 (키움·로컬, 조금 느림)",
+            st.caption("보유종목을 훑어 신호를 표시합니다. 아래 체크 시 **🚨 정리 타이밍을 3중 체크로 등급화**합니다 — "
+                       "①세력 순매도 전환(검증 -8.4%) ②체결강도 약함/꺾임(조기·미검증) ③데드크로스(차트). "
+                       "**3/3=🔴강함 · 2/3=🟠주의 · 1/3=🟡관찰** (겹칠수록 신뢰↑). 키움 필요라 **로컬에서만**.")
+            check_accum = st.checkbox("🚨 정리 타이밍 3중 체크 (키움·로컬, 조금 느림)",
                                       value=False, key="mon_accum")
             with st.spinner("보유종목 신호 스캔 중..."):
                 hits = portfolio_signal_monitor(portfolio, HORIZON, check_accum=check_accum)
