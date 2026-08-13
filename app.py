@@ -1948,14 +1948,14 @@ def render_us_overnight_banner():
     gb = us.get("gap_bias")
     box = st.error if (gb is not None and gb <= -1.0) else (
         st.success if (gb is not None and gb >= 1.0) else st.info)
-    c = st.columns([1, 1, 1, 1, 2])
+    c = st.columns([1, 1, 1, 1, 2], vertical_alignment="top")
     for col, key in zip(c[:4], ("sp", "nasdaq", "sox", "vix")):
         m = us[key]
-        if key == "vix":
-            col.metric(m["label"], f"{m['value']:.0f}" if m["value"] else "—",
-                       f"{m['chg']:+.1f}%" if m["chg"] is not None else None)
-        else:
-            col.metric(m["label"], f"{m['chg']:+.1f}%" if m["chg"] is not None else "—")
+        val = f"{m['value']:,.0f}" if m.get("value") is not None else "—"
+        delta = f"{m['chg']:+.1f}%" if m.get("chg") is not None else None
+        # 모든 카드 동일 구조(레벨+델타%)로 정렬. VIX는 하락=호재라 색상 반전.
+        col.metric(m["label"], val, delta,
+                   delta_color=("inverse" if key == "vix" else "normal"))
     with c[4]:
         box(f"🌙 간밤 미국 ({us.get('date','')}) → {us_market.bias_text(us)}")
         rt = us_market.risk_text(us)
