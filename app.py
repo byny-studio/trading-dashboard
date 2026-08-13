@@ -22,7 +22,7 @@ from plotly.subplots import make_subplots
 from stock_screener import render_screener
 from signals import (  # noqa: F401
     add_indicators, score_signal, trend_score, reversion_score, momentum_score,
-    dual_verdict, overheat_signal, position_action, _recent_cross,
+    dual_verdict, overheat_signal, position_action, _recent_cross, position_guide,
 )
 from candle_analyzer import analyze_candle
 from theme_tracker import render_theme_tracker, leader_theme_map
@@ -2431,6 +2431,17 @@ else:  # 포트폴리오 관리
                 "판정: 추세 70↑ → **📈 추세 매수**, 반등 70↑ → **🔄 반등 매수**, "
                 "55↑ → 양호/주목, 둘 다 낮으면 **⏸️ 관망**."
             )
+            st.markdown(
+                "**📋 포지션 가이드 기준** (각 종목 신호 아래 표시 · 추세+반등+손익+크로스+과열+변동성 종합):\n"
+                "- 🔴 **손절**: 치명적 손실(단기 -20%/중장기 -45%) — 축 무관 정리\n"
+                "- 💰 **익절 검토**: 목표(단기 +20%/중장기 +50%) 도달 또는 과열+이익\n"
+                "- 🟠 **정리 검토**: 데드크로스 + 추세 붕괴(≤40) + 손실\n"
+                "- 🟢 **홀딩**: 추세 유효(≥55) 또는 골든크로스 — 추세 태우기\n"
+                "- 🔵 **물타기 검토(조건부)**: 손실 + 반등축 유효(반등≥55) + 저변동(≤4%) + 추세붕괴 아님. "
+                "⚠️ 물타기는 백테스트상 위험(MDD↑) → **소량 분할만**, 확신 없으면 홀딩\n"
+                "- ⏳ **반등 대기**: 손실이나 반등 신호 유효 — 물타기보다 보유 대기\n"
+                "- ⏸️ **관망**: 뚜렷한 신호 없음"
+            )
 
         _hz_name = "단기 트레이딩" if HORIZON == "short" else "중장기(몇 주)"
         with st.expander(f"🧭 내 포트폴리오 진단 — {_hz_name}", expanded=True):
@@ -2478,18 +2489,19 @@ else:  # 포트폴리오 관리
                 _oh = overheat_signal(df_ind, HORIZON)
                 cur_price = int(df_ind.iloc[-1]["Close"])
                 _buy = item.get("buy_price", 0) or 0
-                _action = position_action(_buy, cur_price, _t, _r, _oh["level"], _mkt_bull, HORIZON,
-                                          item.get("strategy", "auto"))
-                if _action:
-                    # 매수가 있으면 내 포지션 기준 행동 제안 우선
-                    signal_text = f"{_action}  (📈{_t} 🔄{_r})"
-                else:
-                    _oh_tag = (_oh["text"] + " · ") if _oh["level"] == 2 else ("⚠️과열 · " if _oh["level"] == 1 else "")
-                    signal_text = f"{_oh_tag}{dual_verdict(_t, _r, _mkt_bull)} (📈{_t} 🔄{_r})"
+                # 종합 포지션 가이드(추세+반등+손익+크로스+과열+변동성) → 홀딩/물타기/정리…
+                _fast, _slow = (60, 120) if HORIZON == "mid" else (5, 20)
+                _cx = _recent_cross(df_ind, _fast, _slow)
+                _vol = float(df_ind["Close"].pct_change().tail(20).std() * 100)
+                _pl = ((cur_price - _buy) / _buy * 100) if _buy else None
+                _guide, guide_reason = position_guide(
+                    _pl, _t, _r, _cx[0] if _cx else None, _oh["level"], _vol, HORIZON)
+                signal_text = f"{_guide}  (📈{_t} 🔄{_r})"
             else:
                 df_ind = None
                 result = None
                 signal_text = "⚠️ 데이터 없음"
+                guide_reason = ""
                 cur_price = 0
 
             buy = item.get("buy_price", 0) or 0
@@ -2519,6 +2531,8 @@ else:  # 포트폴리오 관리
                         "</div>",
                         unsafe_allow_html=True,
                     )
+                    if guide_reason:
+                        st.caption(f"📋 {guide_reason}")
                     bc = st.columns(3)
                     if bc[0].button("🧪 백테스트", key=f"bt_{i}", use_container_width=True):
                         if bt_idx == i:
@@ -2559,6 +2573,8 @@ else:  # 포트폴리오 관리
                     cols[0].caption(_desc)
                 # cols[1]은 종목 ↔ 매매신호 사이 여백 (spacer)
                 cols[2].write(signal_text)
+                if guide_reason:
+                    cols[2].caption(f"📋 {guide_reason}")
                 cols[3].write(f"{buy:,}")
                 cols[4].write(f"{qty}")
                 cols[5].write(eval_text)

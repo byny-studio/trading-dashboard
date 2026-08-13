@@ -506,3 +506,37 @@ def _recent_cross(df, fast_n, slow_n, lookback=3):
             if f.iloc[b] >= s.iloc[b] and f.iloc[a] < s.iloc[a]:
                 return ("dead", k - 1)
     return None
+
+
+def position_guide(pl_pct, trend, rev, cross, oh_level, vol, horizon="short"):
+    """보유 포지션 종합 가이드 — 추세+반등+손익+크로스+과열+변동성 → (라벨, 근거).
+    cross: 'golden'|'dead'|None · pl_pct: 손익%(None=매수가 없음) · vol: 일간변동성%.
+    우선순위: 치명손절 > 익절 > 정리 > 홀딩 > 물타기/반등대기 > 관망.
+    ⚠️ 물타기는 백테스트(2026-07-08)상 MDD 악화라 '조건부·소량 분할'로만 권고."""
+    mid = horizon == "mid"
+    sl = -45 if mid else -20      # 치명적 손실선
+    tp = 50 if mid else 20        # 목표 수익선
+    p = f"{pl_pct:+.0f}%" if pl_pct is not None else "-"
+    loss = pl_pct is not None and pl_pct < 0
+    # 1) 치명적 손실 → 손절(축 무관)
+    if pl_pct is not None and pl_pct <= sl:
+        return "🔴 손절", f"치명적 손실({p}) — 축 무관 정리"
+    # 2) 목표 도달·과열 이익 → 익절
+    if pl_pct is not None and (pl_pct >= tp or (oh_level == 2 and pl_pct > 0)):
+        return "💰 익절 검토", f"목표/과열 도달({p}) — 일부 차익실현"
+    # 3) 데드크로스 + 추세 붕괴 + 손실 → 정리
+    if cross == "dead" and trend <= 40 and loss:
+        return "🟠 정리 검토", f"데드크로스+추세붕괴(추세 {trend})+손실({p}) — 반등 없으면 정리"
+    # 4) 추세 살아있음/골든크로스 → 홀딩(추세 태우기)
+    if trend >= 55 or cross == "golden":
+        tag = "·골든크로스" if cross == "golden" else ""
+        return "🟢 홀딩", f"추세 유효(추세 {trend}{tag}) — 보유 지속"
+    # 5) 손실 + 반등축 유효 → 물타기(조건부) / 반등 대기
+    if loss and rev >= 55:
+        if cross != "dead" and vol is not None and vol <= 4.0:
+            return "🔵 물타기 검토(조건부)", (
+                f"반등축 유효(반등 {rev})·저변동({vol:.1f}%)·추세붕괴 아님 — 소량 분할만. "
+                f"⚠️물타기는 검증상 위험(MDD↑), 확신 없으면 홀딩")
+        return "⏳ 반등 대기", f"반등 신호 유효(반등 {rev}) — 물타기보다 보유 대기"
+    # 6) 애매
+    return "⏸️ 관망", f"뚜렷한 신호 없음(추세 {trend}·반등 {rev})"
