@@ -474,6 +474,21 @@ def get_kiwoom_supply(code: str) -> dict:
         return {}
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def get_kiwoom_cntr_str(code: str) -> dict:
+    """키움 ka10046 체결강도(매수세) 최신 + 5/20/60분. 2분 캐시. 장중에만 유효, 실패 시 {}."""
+    import os, sys
+    try:
+        ad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autotrade")
+        if os.path.isdir(ad) and ad not in sys.path:
+            sys.path.insert(0, ad)
+        from kiwoom_api import from_secrets
+        api = from_secrets()
+        return api.get_cntr_str(code) or {}
+    except Exception:
+        return {}
+
+
 def analyze_financials(fin: dict) -> str:
     """재무 표 → 기업분석 한 줄 요약(성장성·수익성·안정성·흑자여부)."""
     if not fin or not fin.get("매출액"):
@@ -2247,12 +2262,29 @@ def portfolio_signal_monitor(portfolio, horizon="short", check_accum=False):
             sigs.append(("🔥 과열", oh.get("text", "과열 구간 — 차익 주의")))
         if check_accum:
             kf = get_kiwoom_supply(code)
-            if kf and kf.get("accumulating"):
-                txt = kf.get("headline", "매집 진행")
+            if kf:
                 ph = kf.get("phase")
-                if ph:
-                    txt += f" · {ph[0]} {ph[1]}"
-                sigs.append(("🏛️ 매집 신호", txt))
+                weakening = bool(ph) and ph[1] == "이탈 주의"
+                if kf.get("accumulating") and not weakening:
+                    txt = kf.get("headline", "매집 진행")
+                    if ph:
+                        txt += f" · {ph[0]} {ph[1]}"
+                    sigs.append(("🏛️ 매집 진행", txt))
+                elif kf.get("accumulating") and weakening:
+                    sigs.append(("🟠 매집 약화",
+                                 "세력이 최근 순매수를 멈춤/이탈 — 검증상 이후 20일 하락 확률↑(-3.8%)"))
+                elif str(kf.get("headline", "")).startswith("🔴"):
+                    sigs.append(("🔴 매집 이탈",
+                                 "스마트머니(사모·기관) 순매도 전환 — 검증상 이탈 후 하락(-8.7%)"))
+            # 체결강도(매수세) 약화·꺾임 — 실시간(장중) 경고
+            cs = get_kiwoom_cntr_str(code)
+            now = cs.get("now") if cs else None
+            if now:
+                m60 = cs.get("m60") or now
+                if now < 100:
+                    sigs.append(("⚠️ 체결강도 약함", f"체결강도 {now:.0f} (<100 · 매수세 약)"))
+                elif m60 and now < m60 * 0.85:
+                    sigs.append(("⚠️ 체결강도 꺾임", f"60분 {m60:.0f} → 현재 {now:.0f} (매수세 식는 중)"))
         if sigs:
             hits.append({"code": code, "name": it.get("name", code), "signals": sigs})
     return hits
@@ -2834,15 +2866,16 @@ else:  # 포트폴리오 관리
         mobile = is_mobile()
 
         # ----- 📡 신호 모니터 (추세 전환·매집이 잡힌 보유종목만) -----
-        with st.expander("📡 신호 모니터 — 추세 전환·매집이 잡힌 보유종목", expanded=True):
+        with st.expander("📡 신호 모니터 — 추세 전환·매집 변화가 잡힌 보유종목", expanded=True):
             st.caption("보유종목을 훑어 **추세 전환(골든/데드크로스)·과열**을 자동 표시합니다(최근 3거래일 내). "
-                       "매집(사모·기관 수급)은 키움 필요라 아래 체크 시 **로컬에서만** 확인됩니다.")
-            check_accum = st.checkbox("🏛️ 매집 신호도 확인 (키움·로컬, 조금 느림)",
+                       "아래 체크 시 **매집 약화·이탈**(세력 순매도 전환)과 **체결강도 꺾임**(매수세 식음)까지 "
+                       "경고합니다 — 키움 필요라 **로컬에서만**. (매집 이탈은 검증상 이후 하락 확률↑)")
+            check_accum = st.checkbox("🏛️ 매집·체결강도 변화도 확인 (키움·로컬, 조금 느림)",
                                       value=False, key="mon_accum")
             with st.spinner("보유종목 신호 스캔 중..."):
                 hits = portfolio_signal_monitor(portfolio, HORIZON, check_accum=check_accum)
             if not hits:
-                _scope = "추세 전환·과열" + ("·매집" if check_accum else "")
+                _scope = "추세 전환·과열" + ("·매집변화·체결강도" if check_accum else "")
                 st.success(f"현재 {_scope} 신호가 잡힌 보유종목이 없습니다.")
             else:
                 for h in hits:
