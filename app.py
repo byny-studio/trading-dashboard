@@ -2264,18 +2264,19 @@ def portfolio_signal_monitor(portfolio, horizon="short", check_accum=False):
             kf = get_kiwoom_supply(code)
             if kf:
                 ph = kf.get("phase")
-                weakening = bool(ph) and ph[1] == "이탈 주의"
-                if kf.get("accumulating") and not weakening:
+                weakening = bool(ph) and ph[1] == "이탈 주의"     # 세력 최근10일 순매도 전환
+                out = str(kf.get("headline", "")).startswith("🔴")  # 20일 세력 이탈
+                if weakening or out:
+                    # ⭐ 검증(accumulate_exit.py): 세력 최근 순매도 전환 = 가장 강한 정리 신호
+                    #    이후 20일 중앙 -8.4%·승률 27% (매집유지 -4.7%보다 -3.7%p 나쁨)
+                    sigs.append(("🚨 정리 타이밍",
+                                 "세력(스마트머니) 최근 순매도 전환 — 검증상 이후 20일 중앙 -8.4%·"
+                                 "승률 27%(매집유지 -4.7%보다 나쁨). 정리 고려."))
+                elif kf.get("accumulating"):
                     txt = kf.get("headline", "매집 진행")
                     if ph:
                         txt += f" · {ph[0]} {ph[1]}"
                     sigs.append(("🏛️ 매집 진행", txt))
-                elif kf.get("accumulating") and weakening:
-                    sigs.append(("🟠 매집 약화",
-                                 "세력이 최근 순매수를 멈춤/이탈 — 검증상 이후 20일 하락 확률↑(-3.8%)"))
-                elif str(kf.get("headline", "")).startswith("🔴"):
-                    sigs.append(("🔴 매집 이탈",
-                                 "스마트머니(사모·기관) 순매도 전환 — 검증상 이탈 후 하락(-8.7%)"))
             # 체결강도(매수세) 약화·꺾임 — 실시간(장중) 경고
             cs = get_kiwoom_cntr_str(code)
             now = cs.get("now") if cs else None
@@ -2868,9 +2869,9 @@ else:  # 포트폴리오 관리
         # ----- 📡 신호 모니터 (추세 전환·매집이 잡힌 보유종목만) -----
         with st.expander("📡 신호 모니터 — 추세 전환·매집 변화가 잡힌 보유종목", expanded=True):
             st.caption("보유종목을 훑어 **추세 전환(골든/데드크로스)·과열**을 자동 표시합니다(최근 3거래일 내). "
-                       "아래 체크 시 **매집 약화·이탈**(세력 순매도 전환)과 **체결강도 꺾임**(매수세 식음)까지 "
-                       "경고합니다 — 키움 필요라 **로컬에서만**. (매집 이탈은 검증상 이후 하락 확률↑)")
-            check_accum = st.checkbox("🏛️ 매집·체결강도 변화도 확인 (키움·로컬, 조금 느림)",
+                       "아래 체크 시 **🚨 정리 타이밍**(세력 최근 순매도 전환 — 검증상 이후 20일 -8.4%·승률 27%)과 "
+                       "**체결강도 꺾임**까지 경고합니다 — 키움 필요라 **로컬에서만**.")
+            check_accum = st.checkbox("🏛️ 매집 변화·정리 타이밍도 확인 (키움·로컬, 조금 느림)",
                                       value=False, key="mon_accum")
             with st.spinner("보유종목 신호 스캔 중..."):
                 hits = portfolio_signal_monitor(portfolio, HORIZON, check_accum=check_accum)
