@@ -21,6 +21,30 @@ import pandas as pd
 import requests
 import FinanceDataReader as fdr
 
+# --- 공용 신호 로직 import (app.py와 단일화) + 반환형 어댑터 ---
+from signals import (  # noqa: E402
+    add_indicators, position_action,
+    trend_score as _ts, reversion_score as _rs,
+    overheat_signal as _ohs, _recent_cross as _rc,
+)
+
+
+def trend_score(df, horizon="short"):
+    return _ts(df, horizon)["total"]
+
+
+def reversion_score(df, horizon="short"):
+    return _rs(df, horizon)["total"]
+
+
+def overheat(df, horizon="short"):
+    d = _ohs(df, horizon)
+    return d["level"], d["text"]
+
+
+def _recent_cross(df, fast_n, slow_n, lookback=2):  # 디스코드는 오늘/어제만(기존 기본 2)
+    return _rc(df, fast_n, slow_n, lookback)
+
 
 # 뉴스 → 테마 키워드 (테마명, [키워드], 업종, [대표 대장주])
 THEME_KEYWORDS = [
@@ -164,170 +188,16 @@ def early_momentum_themes(themes, top=3, min_vol=1.2):
     return out
 
 
-def _recent_cross(df, fast_n, slow_n, lookback=2):
-    """최근 lookback 거래일 내 골든/데드크로스 → ('golden'|'dead', 며칠전) 또는 None.
-    (추세 전환 순간 포착 — 디스코드는 오늘/어제 발생분만 알림)"""
-    f = df.get(f"MA{fast_n}"); s = df.get(f"MA{slow_n}")
-    if f is None or s is None or len(df) < slow_n + 2:
-        return None
-    for k in range(1, lookback + 1):
-        try:
-            fa, sa, fb, sb = f.iloc[-k], s.iloc[-k], f.iloc[-k - 1], s.iloc[-k - 1]
-        except Exception:
-            continue
-        if any(v != v for v in (fa, sa, fb, sb)):   # NaN 스킵
-            continue
-        if fb <= sb and fa > sa:
-            return ("golden", k - 1)
-        if fb >= sb and fa < sa:
-            return ("dead", k - 1)
-    return None
 
 
-def add_indicators(df):
-    df = df.copy()
-    for n in (5, 20, 60, 120):
-        df[f"MA{n}"] = df["Close"].rolling(n).mean()
-    ma20 = df["Close"].rolling(20).mean()
-    std20 = df["Close"].rolling(20).std()
-    df["BB_Upper"] = ma20 + 2 * std20
-    df["BB_Lower"] = ma20 - 2 * std20
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = -delta.clip(upper=0).rolling(14).mean()
-    df["RSI"] = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
-    df["VOL_MA20"] = df["Volume"].rolling(20).mean()
-    return df
 
 
-def trend_score(df, horizon="short"):
-    """단기(MA5/20)/중장기(MA20/60) 추세 점수. app.py trend_score와 동일 규칙(정수 반환판)."""
-    if df.empty or len(df) < 60:
-        return 0
-    mid = horizon == "mid"
-    fast_n, slow_n = (60, 120) if mid else (5, 20)
-    last = df.iloc[-1]
-    v = []
-    mas = [last.get(f"MA{n}") for n in (5, 20, 60, 120)]
-    if all(pd.notna(mas)):
-        if mid:
-            v.append(5 if mas[1] > mas[2] > mas[3] else 4 if mas[1] > mas[2]
-                     else 0 if mas[1] < mas[2] < mas[3] else 2)
-        else:
-            v.append(5 if mas[0] > mas[1] > mas[2] > mas[3] else 4 if mas[0] > mas[1] > mas[2]
-                     else 3 if mas[0] > mas[1] else 0 if mas[0] < mas[1] < mas[2] < mas[3] else 2)
-    else:
-        v.append(2)
-    cf, cs = f"MA{fast_n}", f"MA{slow_n}"
-    mf, ms = df[cf].iloc[-1], df[cs].iloc[-1]
-    mfp, msp = df[cf].iloc[-2], df[cs].iloc[-2]
-    v.append(5 if (mfp <= msp and mf > ms) else 0 if (mfp >= msp and mf < ms) else 4 if mf > ms else 1)
-    lo, hi = (45, 75) if mid else (50, 70)
-    rsi = last.get("RSI")
-    v.append((5 if lo <= rsi < hi else 3 if rsi >= hi else 2 if (lo - 10) <= rsi < lo else 0) if pd.notna(rsi) else 2)
-    close = last["Close"]
-    bu, bl = last.get("BB_Upper"), last.get("BB_Lower")
-    pos = (close - bl) / (bu - bl) if (pd.notna(bu) and bu != bl) else 0.5
-    v.append(5 if 0.5 <= pos < 0.8 else 4 if pos >= 0.8 else 2 if 0.3 <= pos < 0.5 else 0)
-    vma = last.get("VOL_MA20")
-    r = last["Volume"] / vma if (pd.notna(vma) and vma > 0) else 1
-    v.append(5 if r >= 2 else 4 if r >= 1.3 else 3 if r >= 0.8 else 1)
-    return sum(v) * 4
 
 
-def reversion_score(df, horizon="short"):
-    """단기(MA20 이격)/중장기(MA60 이격, 더 깊게) 반등 점수. app.py와 동일 규칙(정수 반환판)."""
-    if df.empty or len(df) < 60:
-        return 0
-    mid = horizon == "mid"
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    v = []
-    rsi = last.get("RSI")
-    v.append((5 if rsi < 30 else 4 if rsi < 40 else 2 if rsi < 50 else 0) if pd.notna(rsi) else 2)
-    close = last["Close"]
-    bu, bl = last.get("BB_Upper"), last.get("BB_Lower")
-    pos = (close - bl) / (bu - bl) if (pd.notna(bu) and bu != bl) else 0.5
-    v.append(5 if pos < 0.1 else 4 if pos < 0.25 else 2 if pos < 0.45 else 0)
-    base_n = 120 if mid else 20
-    t1, t2, t3 = (-0.22, -0.13, -0.06) if mid else (-0.12, -0.07, -0.03)
-    base_ma = last.get(f"MA{base_n}")
-    gap = (close - base_ma) / base_ma if (pd.notna(base_ma) and base_ma > 0) else 0
-    v.append(5 if gap <= t1 else 4 if gap <= t2 else 2 if gap <= t3 else 1)
-    vma = last.get("VOL_MA20")
-    r = last["Volume"] / vma if (pd.notna(vma) and vma > 0) else 1
-    v.append(5 if r >= 1.5 else 3 if r >= 1.0 else 1)
-    up = close > prev["Close"]
-    cu = close > last.get("Open", close)
-    v.append(5 if (up and cu) else 3 if up else 1)
-    return sum(v) * 4
 
 
-def overheat(df, horizon="short"):
-    mid = horizon == "mid"
-    win = 40 if mid else 5
-    if df.empty or len(df) < win + 1:
-        return 0, []
-    last, prev = df.iloc[-1], df.iloc[-2]
-    close = float(last["Close"])
-    rsi = last.get("RSI")
-    bu = last.get("BB_Upper")
-    chg1 = (close - prev["Close"]) / prev["Close"] * 100 if prev["Close"] else 0
-    cw = float(df["Close"].iloc[-(win + 1)])
-    chg5 = (close - cw) / cw * 100 if cw else 0
-    vma = last.get("VOL_MA20")
-    vr = last["Volume"] / vma if (pd.notna(vma) and vma > 0) else 0
-    rsi_hi = 78 if mid else 70
-    c_rsi = pd.notna(rsi) and rsi >= rsi_hi
-    c_band = pd.notna(bu) and close >= bu
-    c_s1, c_s5, c_vol = chg1 >= (15 if mid else 8), chg5 >= (60 if mid else 18), vr >= 2
-    tags = [t for t, ok in [
-        (f"RSI{rsi:.0f}" if pd.notna(rsi) else "RSI-", c_rsi),
-        ("볼린저상단", c_band), (f"1일{chg1:+.0f}%", c_s1),
-        (f"{win}일{chg5:+.0f}%", c_s5), (f"거래{vr:.1f}x", c_vol)] if ok]
-    met = sum([c_rsi, c_band, c_s1, c_s5, c_vol])
-    strong = (c_rsi and (c_band or c_s1)) or (c_s1 and (c_band or c_vol)) or met >= 3
-    return (2 if strong else 1 if (c_band or c_s1 or met >= 2) else 0), tags
 
 
-def position_action(buy_price, cur_price, trend, rev, oh_level, mb=True, horizon="short",
-                    strategy="auto"):
-    """산 이유(추세/반등) 축에 맞춰 관리 — app.py position_action과 동일 규칙.
-    반등으로 산 종목을 '추세 약세'로 손절하지 않음(가짜 손절 방지)."""
-    if not buy_price or buy_price <= 0 or not cur_price:
-        return ""
-    mid = horizon == "mid"
-    tp, sl = (50, -18) if mid else (20, -8)
-    hard = sl * 2.5
-    pl = (cur_price - buy_price) / buy_price * 100
-    p = f"{pl:+.1f}%"
-    axis = strategy if strategy in ("trend", "reversion") else \
-        ("reversion" if rev > trend else "trend")
-
-    if oh_level >= 2 and pl > 0:
-        return f"🔥 익절 고려 · 손익 {p} (과열)"
-    if pl <= hard:
-        return f"✂️ 손절 검토 · 손익 {p} (손실 과다)"
-
-    if axis == "trend":
-        if pl >= tp and trend < 55:
-            return f"💰 익절 고려 · 손익 {p} (추세 둔화)"
-        if pl <= sl and trend <= 40:
-            return f"✂️ 손절 검토 · 손익 {p} (추세 이탈)"
-        if pl >= 0 and mb and trend >= 70:
-            return f"📈 보유·추가매수 여지 · 손익 {p} (추세 강함)"
-        if trend >= 55:
-            return f"✅ 보유 지속 · 손익 {p} (추세 유효)"
-        return f"⏸️ 관망 · 손익 {p}"
-
-    rev_sl = sl * 1.6
-    if pl >= tp:
-        return f"💰 익절 고려 · 손익 {p} (반등 목표 도달)"
-    if pl <= rev_sl and rev < 50:
-        return f"✂️ 손절 검토 · 손익 {p} (반등 실패)"
-    if rev >= 55:
-        return f"⏳ 반등 대기 · 손익 {p} (반등 신호 유효)"
-    return f"⏸️ 관망 · 손익 {p}"
 
 
 def _num(text):
