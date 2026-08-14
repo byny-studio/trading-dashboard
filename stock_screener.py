@@ -242,7 +242,7 @@ def render_screener(
         _render_accumulation(
             load_stock_data=load_stock_data, add_indicators=add_indicators,
             score_signal=score_signal, calc_stop_levels=calc_stop_levels,
-            make_chart=make_chart, add_to_sim=add_to_sim,
+            make_chart=make_chart, add_to_sim=add_to_sim, show_detail=show_detail,
         )
         # 매집에서 담은 관심종목을 이 화면 하단에도 바로 표시 (목록은 저장정보만 → 가벼움)
         st.markdown("---")
@@ -569,9 +569,10 @@ def _apply_sort_filter(rows, sort_key, f_lowvol, f_cntr, f_notrisen):
 
 
 def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal=None,
-                         calc_stop_levels=None, make_chart=None, add_to_sim=None):
+                         calc_stop_levels=None, make_chart=None, add_to_sim=None,
+                         show_detail=None):
     """키움 투자자별 수급으로 사모·기관 '조용한 매집' 종목 발굴 (대형/중형 강도순). 참고용.
-    add_to_sim: 있으면 카드에 '📒 모의매수' 버튼 노출(app.py sim_portfolio 콜백)."""
+    add_to_sim: 카드 '📒 모의매수' 버튼. show_detail: 종목 클릭 시 풀 상세."""
     st.caption(
         "키움 투자자별 수급(ka10059)으로 **'조용한 매집'**(사모·기관 지속 순매수 + 개미 이탈) 종목을 "
         "대형/중형으로 나눠 **매집 강도순**으로 뽑습니다. "
@@ -700,11 +701,11 @@ def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal
                  "📒 모의매수 메뉴에서 지수(KODEX200) 대비 성과를 추적하세요."))
     _render_accum_section("🏛️ 대형주 매집", large, watchlist, watchlist_codes, "L",
                           "광범위 기관매집(사모+금융투자+투신+기관) 유효 · 검증 사모 +5.4%p",
-                          add_to_sim=add_to_sim, sim_qty=sim_qty, starred=starred)
+                          add_to_sim=add_to_sim, sim_qty=sim_qty, starred=starred, show_detail=show_detail)
     st.markdown("")
     _render_accum_section("🏗️ 중형주 매집", mid, watchlist, watchlist_codes, "M",
                           "사모 주력(+4.3%p) · 외국인 지속매수는 역신호라 제외",
-                          add_to_sim=add_to_sim, sim_qty=sim_qty, starred=starred)
+                          add_to_sim=add_to_sim, sim_qty=sim_qty, starred=starred, show_detail=show_detail)
 
 
 def _accum_stage(days):
@@ -789,10 +790,10 @@ def _accum_cntr_str(f) -> str:
 
 
 def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note,
-                          add_to_sim=None, sim_qty=10, starred=None):
+                          add_to_sim=None, sim_qty=10, starred=None, show_detail=None):
     """매집 결과 한 섹션(대형/중형): 종목별 카드 + 직관 배지 + 관심종목/모의매수/별표.
     add_to_sim(code,name,qty,price,note)->bool: 있으면 '📒 모의매수' 버튼 표시(price=0→오늘종가).
-    starred(set): 별표(⭐) 코드 집합 — 보기용 즐겨찾기 토글."""
+    starred(set): 별표(⭐) 코드 집합. show_detail(code,name): 종목명 클릭 시 풀 상세(발굴·포트폴리오와 동일)."""
     starred = starred if starred is not None else set()
     st.markdown(f"### {title} ({len(rows)}개)")
     st.caption(note)
@@ -808,8 +809,18 @@ def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note,
             else:
                 top = st.columns([3.0, 1.3, 0.5])
             _star = "⭐ " if f["code"] in starred else ""
-            top[0].markdown(f"**{i+1}. {_star}{f['name']}**　`{f['code']}` · 시총 {f['rank']}위{desc_html(f['code'])}",
-                            unsafe_allow_html=True)
+            _issel = st.session_state.get("accum_sel_code") == f["code"]
+            if show_detail:
+                if top[0].button(f"{i+1}. {_star}{f['name']} ({f['code']})",
+                                 key=f"accum_name_{prefix}_{i}", use_container_width=True,
+                                 type="primary" if _issel else "secondary"):
+                    st.session_state["accum_sel_code"] = None if _issel else f["code"]
+                    st.rerun()
+                _dsc = stock_desc(f["code"])
+                top[0].caption(f"시총 {f['rank']}위" + (f" · {_dsc}" if _dsc else ""))
+            else:
+                top[0].markdown(f"**{i+1}. {_star}{f['name']}**　`{f['code']}` · 시총 {f['rank']}위{desc_html(f['code'])}",
+                                unsafe_allow_html=True)
             if phase:
                 top[0].markdown(phase[0])
                 top[0].caption(phase[1])
@@ -858,6 +869,10 @@ def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note,
             extra = [x for x in (_accum_stability(f), _accum_cntr_str(f)) if x]
             if extra:
                 st.markdown("　".join(extra))
+            # 종목명 클릭 시 풀 상세(발굴·포트폴리오와 동일 구조) 펼침
+            if show_detail and _issel:
+                with st.container(border=True):
+                    show_detail(f["code"], f["name"])
 
 
 def _render_result_table(results, watchlist, watchlist_codes, save_fn, prefix="",

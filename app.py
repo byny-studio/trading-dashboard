@@ -1471,6 +1471,36 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
         for k, (s, msg) in rv["details"].items():
             st.write(f"- **{k}**: {s}/5 — {msg}")
 
+    # ===== 💵 매매 가격대 (매수·손절·익절) — 어디서 열든 항상 동일 구조 =====
+    st.markdown("---")
+    cur_close = float(last["Close"])
+    ref = buy_price if buy_price > 0 else cur_close     # 손절 기준(매수가 없으면 현재가)
+    profit_base = max(ref, cur_close)                   # 익절 기준
+    levels = calc_stop_levels(ref, cur_close)
+    st.markdown("### 💵 매매 가격대 (매수 · 손절 · 익절)")
+    if buy_price > 0:
+        _inp = cur_close >= buy_price
+        st.caption(f"손절=매수가 {int(buy_price):,}원 기준 · 익절={'현재가' if _inp else '매수가'} 기준")
+    else:
+        st.caption("보유 전 참고 — **현재가(지금 사면) 기준**. 실제 매수 시 매수가 기준으로 재계산됩니다.")
+    g = st.columns(3)
+    g[0].markdown("**💵 매수 가격대(분할 진입)**")
+    _zones = suggest_buy_zones(df_ind)
+    if _zones:
+        for zlabel, zprice, _znote in _zones:
+            g[0].write(f"{zlabel}: {zprice:,}원")
+    else:
+        g[0].caption("제안 없음")
+    g[1].markdown(f"**🛑 손절가** _({int(ref):,}원 기준)_")
+    g[1].write(f"보수적: {levels['보수적 손절(-3%)']:,}원")
+    g[1].write(f"일반: {levels['일반 손절(-7%)']:,}원")
+    g[1].write(f"최후: {levels['최후 손절(-10%)']:,}원")
+    g[2].markdown(f"**🎯 익절가** _({int(profit_base):,}원 기준)_")
+    g[2].write(f"1차: {levels['1차 익절(+3%)']:,}원")
+    g[2].write(f"2차: {levels['2차 익절(+7%)']:,}원")
+    g[2].write(f"3차: {levels['3차 익절(+15%)']:,}원")
+    st.markdown("---")
+
     st.markdown("### 💡 매매 팁")
     tip_line, glossary_line = make_technical_tip(result)
     st.markdown(f"- {tip_line}")
@@ -1610,33 +1640,6 @@ def render_analysis_detail(df_ind: pd.DataFrame, result: dict, name: str, code: 
                     )
                 st.markdown("\n".join(dl))
             st.caption("단위: 주 · (+)순매수 / (−)순매도 · 출처: 네이버 금융 · ⚠️키움 연결 시 사모까지 분석")
-
-    if tr["total"] >= 55 or rv["total"] >= 55:
-        st.markdown("### 💵 매수 가격대 제안")
-        st.caption("추세 또는 반등 점수가 충분할 때만 노출됩니다. 분할 매수 시 단계별 진입 가격으로 활용하세요.")
-        for zlabel, zprice, znote in suggest_buy_zones(df_ind):
-            st.write(f"- **{zlabel}**: `{zprice:,}원` — {znote}")
-
-    if buy_price > 0:
-        cur_close = float(last["Close"])
-        profit_base = max(buy_price, cur_close)
-        in_profit = cur_close >= buy_price
-        st.markdown("### 💰 손절/익절 가격")
-        st.caption(
-            "손절가: 매수가 기준 (원금 보호) · "
-            f"익절가: {'현재가' if in_profit else '매수가'} 기준 "
-            f"({'수익 중 → 추가 상승 목표' if in_profit else '손실 중 → 매수가 회복 후 목표'})"
-        )
-        levels = calc_stop_levels(buy_price, cur_close)
-        cols = st.columns(3)
-        cols[0].markdown(f"**🛑 손절가** _(매수가 {int(buy_price):,}원 기준)_")
-        cols[0].write(f"보수적: {levels['보수적 손절(-3%)']:,}원")
-        cols[0].write(f"일반: {levels['일반 손절(-7%)']:,}원")
-        cols[0].write(f"최후: {levels['최후 손절(-10%)']:,}원")
-        cols[2].markdown(f"**🎯 익절가** _({int(profit_base):,}원 기준)_")
-        cols[2].write(f"1차: {levels['1차 익절(+3%)']:,}원")
-        cols[2].write(f"2차: {levels['2차 익절(+7%)']:,}원")
-        cols[2].write(f"3차: {levels['3차 익절(+15%)']:,}원")
 
     st.markdown("### 📈 차트")
     st.plotly_chart(make_chart(df_ind, format_stock(name, code)), use_container_width=True)
