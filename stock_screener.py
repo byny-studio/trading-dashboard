@@ -656,19 +656,26 @@ def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal
     sort_key = sc1.selectbox("정렬", list(_ACCUM_SORTS.keys()), key="accum_sort")
     with sc2:
         st.caption("필터")
-        fc = st.columns(5)
-        f_lowvol = fc[0].checkbox("🟢 저변동만", key="accum_f_lowvol",
+        fc = st.columns(6)
+        f_earlypick = fc[0].checkbox("🎯 초입픽만(압축)", key="accum_f_earlypick",
+                                     help="체크하면 초입픽 통과 종목만 압축해 봅니다. 체크 안 하면 전체 목록에 "
+                                          "🎯통과 배지 / ⚠️제외 사유 태그가 함께 표시됩니다. "
+                                          "초입픽=저변동(≤4.8%)+매집가속+매집 초반(7일내), 검증상 하방방어·+10% 익절 타겟")
+        f_lowvol = fc[1].checkbox("🟢 저변동만", key="accum_f_lowvol",
                                   help="일간 변동성 ≤3.5% (기복 적은 것만)")
-        f_cntr = fc[1].checkbox("💪 체결강도120↑", key="accum_f_cntr",
+        f_cntr = fc[2].checkbox("💪 체결강도120↑", key="accum_f_cntr",
                                 help="매수세 강한 것만(장중값). 마감 후·조회실패면 제외될 수 있음")
-        f_notrisen = fc[2].checkbox("🔵 덜오른것만", key="accum_f_notrisen",
-                                    help="20일 수익률 ≤10% (매집 초기 타이밍)")
-        f_uptick = fc[3].checkbox("🚀 상승초입만", key="accum_f_uptick",
+        f_notrisen = fc[3].checkbox("🔵 덜오른것만", key="accum_f_notrisen",
+                                    help="20일 수익률 ≤10% (⚠️ 검증상 '덜 오른게 유리'는 근거 약함)")
+        f_uptick = fc[4].checkbox("🚀 상승초입만", key="accum_f_uptick",
                                   help="세력 매수 지속 + 개미 복귀(최근10일) — 검증상 강세장 가장 강한 국면(+6.3%·승률58%)")
-        f_star = fc[4].checkbox("⭐ 별표만", key="accum_f_star",
+        f_star = fc[5].checkbox("⭐ 별표만", key="accum_f_star",
                                 help="별표(⭐) 표시한 종목만 보기")
     large = _apply_sort_filter(large, sort_key, f_lowvol, f_cntr, f_notrisen)
     mid = _apply_sort_filter(mid, sort_key, f_lowvol, f_cntr, f_notrisen)
+    if f_earlypick:   # 검증된 초입 조합 = 저변동 + 매집가속(recent>early)
+        large = [x for x in large if _is_early_pick(x)]
+        mid = [x for x in mid if _is_early_pick(x)]
     if f_uptick:   # 상승초입 = 세력 최근순매수(rs>0) + 개미 복귀(ri>0)
         _up = lambda x: x.get("recent_smart", 0) > 0 and x.get("recent_ind", 0) > 0
         large = [x for x in large if _up(x)]
@@ -691,6 +698,12 @@ def _render_accumulation(load_stock_data=None, add_indicators=None, score_signal
             "- **개미 이탈**: 개인이 순매도(빠짐) = 조용한 매집의 좋은 신호(목록 전체가 이 조건 충족).\n"
             "- **🚦 국면(최근 흐름)**: 🟢상승초입(세력매수+개미유입) · 🟢매집지속(세력매수·개미소외) · "
             "🔴이탈주의(세력 최근 멈춤). *백테스트 검증(강세장 기준), 하락장 미검증.*\n"
+            "- **🎯 초입 후보**: **저변동(≤4.8%)+매집가속(지금도 담는 중)+매집 초반(7일내)** 조합. "
+            "검증(accumulate_pattern.py, 매집진입 207건)상 '안 오른' 종목 손실을 -14%→-5%로 **하방 방어**(도달률은 비슷). "
+            "※ 매집 7일 초과(후반)는 제외 — 라이프사이클상 고점(중앙 7일) 경과라 안 올라도 저변동이면 뜨는 함정(예 한국앤컴퍼니). "
+            "**매매규칙 = +10% 익절 / 손절 -8%(깊게) 또는 미설정**. ⚠️ 얕은 손절(-5~7%)은 매집주 노이즈에 "
+            "털려 승률 56%→24%로 **오히려 손해**(진입필터가 이미 하방을 막아 손절이 중복). "
+            "'덜 오른 초입이 유리'도 근거 약함 — 축은 변동성·가속.\n"
             "- ⚠️ 매수신호가 아니라 **관심 후보**입니다. 진입은 차트·추세/반등 신호를 따로 확인한 뒤에."
         )
     sim_qty = 10
@@ -789,6 +802,51 @@ def _accum_cntr_str(f) -> str:
     return f"⚪ 체결강도 {cs:.0f} (매수세 약함 · 매집 식는 중일 수 있음)"
 
 
+# 검증: accumulate_pattern.py (강세장 100일·매집 진입 207건). 저변동(vol≤4.8=표본중앙)
+# + 매집가속(recent_smart>early_smart) 조합 70건 → 진입후 최고 +15.8%, +10% 익절 승률 56%.
+# 핵심 효과는 '더 잘 오름'이 아니라 하방방어: '안 오른' 종목 손실 -5.3%(필터없음 -14.1%의 절반↓).
+# ※ 사용자 가설 '덜 오른 초입이 유리'는 데이터가 반대(이미 오른게 소폭 유리) → 축은 변동성·가속.
+ACCUM_EARLY_VOL = 4.8
+
+
+def _is_early_pick(f) -> bool:
+    """검증된 '매집 초입' 조합: 저변동 + 매집가속(뒤절반>앞절반) + 매집 초반(N일째≤7).
+    ⚠️ N일째≤7 필수: 검증(accumulate_pattern)은 '진입 시점(1일째)'만 봤으나 스캐너는 매일 재스캔해
+       후반(예 22일째)도 저변동+가속이면 잡는 불일치가 있었다(한국앤컴퍼니 000240 케이스: 8월 15~22일째
+       저변동+가속 통과 후 급락). 라이프사이클 검증상 매집 고점은 중앙 7일 → 8일째부터 후반(고점경과)."""
+    vol = f.get("vol")
+    if vol is None or "recent_smart" not in f:
+        return False
+    days = f.get("accum_days", 0)
+    return (vol <= ACCUM_EARLY_VOL and f.get("recent_smart", 0) > f.get("early_smart", 0)
+            and 0 < days <= 7)
+
+
+def _accum_earlypick_badge(f) -> str:
+    if _is_early_pick(f):
+        return "🎯 **초입 후보 (저변동+매집가속+초반7일내)** — +10% 익절 · 손절 -8%(얕은 손절 -5~7%는 노이즈에 털려 오히려 손해)"
+    return ""
+
+
+def _earlypick_status(f):
+    """초입픽 통과 여부 + '왜 빠지는지' 사유. 리스트에서 숨기지 않고 태그로 표시하기 위한 것.
+    반환: (True=통과 / False=제외 / None=판정불가(옛 결과), 제외사유 리스트)."""
+    vol = f.get("vol")
+    if vol is None or "recent_smart" not in f:
+        return None, []
+    days = f.get("accum_days", 0)
+    reasons = []
+    if days > 7:
+        reasons.append(f"매집 {days}일째 후반(고점 경과·검증상 고점 중앙 7일)")
+    elif days <= 0:
+        reasons.append("매집 지속일 미상")
+    if vol > ACCUM_EARLY_VOL:
+        reasons.append(f"고변동 {vol:.1f}%(기복 큼·하방 리스크↑)")
+    if f.get("recent_smart", 0) <= f.get("early_smart", 0):
+        reasons.append("매집 감속(세력 매수세 최근 둔화)")
+    return (len(reasons) == 0), reasons
+
+
 def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note,
                           add_to_sim=None, sim_qty=10, starred=None, show_detail=None):
     """매집 결과 한 섹션(대형/중형): 종목별 카드 + 직관 배지 + 관심종목/모의매수/별표.
@@ -827,6 +885,12 @@ def _render_accum_section(title, rows, watchlist, watchlist_codes, prefix, note,
             _stage = _accum_stage(f.get("accum_days"))
             if _stage:
                 top[0].markdown(_stage)
+            # 초입픽: 리스트에서 숨기지 않고 '통과 배지' 또는 '제외 사유 태그'를 항상 표시
+            _ep_pass, _ep_reasons = _earlypick_status(f)
+            if _ep_pass is True:
+                top[0].markdown(f":green[{_accum_earlypick_badge(f)}]")
+            elif _ep_pass is False and _ep_reasons:
+                top[0].markdown(":orange[⚠️ **초입픽 제외** — " + " · ".join(_ep_reasons) + "]")
             if f["code"] in watchlist_codes:
                 top[1].markdown("✓ 담김")
             elif top[1].button("➕ 관심추가", key=f"accum_add_{prefix}_{i}",
